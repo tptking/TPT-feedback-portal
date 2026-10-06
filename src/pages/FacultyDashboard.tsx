@@ -376,8 +376,93 @@ export default function FacultyDashboard() {
   const resultData = calculateResult();
   const statusData = getStudentStatusData();
 
+  const exportStatusWord = () => {
+    const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
+    
+    let rowsHtml = '';
+    for (let i = 0; i < maxRows; i++) {
+      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '' };
+      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '' };
+      rowsHtml += `
+        <tr>
+          <td>${comp.Register_Number}</td>
+          <td>${comp.Student_Name}</td>
+          <td>${pend.Register_Number}</td>
+          <td>${pend.Student_Name}</td>
+        </tr>
+      `;
+    }
+
+    const html = `
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr>
+            <th colspan="2" style="border: 1px solid black; padding: 8px;">Completed students</th>
+            <th colspan="2" style="border: 1px solid black; padding: 8px;">Pending students</th>
+          </tr>
+          <tr>
+            <th style="border: 1px solid black; padding: 8px;">Register number</th>
+            <th style="border: 1px solid black; padding: 8px;">Name</th>
+            <th style="border: 1px solid black; padding: 8px;">Register number</th>
+            <th style="border: 1px solid black; padding: 8px;">Name</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    `;
+
+    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Student Status</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 12px 16px; text-align: center; } th:nth-child(2), td:nth-child(2), th:nth-child(4), td:nth-child(4) { text-align: left; }</style></head><body>";
+    const footer = "</body></html>";
+    const content = header + html + footer;
+    const filename = 'Student_Status';
+    
+    // @ts-ignore
+    if (window.htmlDocx && window.saveAs) {
+      // @ts-ignore
+      const converted = window.htmlDocx.asBlob(content);
+      // @ts-ignore
+      window.saveAs(converted, `${filename}.docx`);
+    } else {
+      const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(content);
+      const fileDownload = document.createElement("a");
+      document.body.appendChild(fileDownload);
+      fileDownload.href = source;
+      fileDownload.download = filename + '.doc';
+      fileDownload.click();
+      document.body.removeChild(fileDownload);
+    }
+  };
+
   const exportStatusExcel = () => {
-    exportToExcel([...statusData.completed, ...statusData.pending], 'Student_Status');
+    const data: any[] = [];
+    const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
+    data.push({ A: 'Completed students', B: '', C: 'Pending students', D: '' });
+    data.push({ A: 'Register number', B: 'Name', C: 'Register number', D: 'Name' });
+    
+    for (let i = 0; i < maxRows; i++) {
+      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '' };
+      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '' };
+      data.push({
+        A: comp.Register_Number,
+        B: comp.Student_Name,
+        C: pend.Register_Number,
+        D: pend.Student_Name
+      });
+    }
+
+    const ws = XLSX.utils.json_to_sheet(data, { skipHeader: true });
+    
+    if(!ws['!merges']) ws['!merges'] = [];
+    ws['!merges'].push({ s: {r:0, c:0}, e: {r:0, c:1} });
+    ws['!merges'].push({ s: {r:0, c:2}, e: {r:0, c:3} });
+    
+    ws['!cols'] = [{wch: 20}, {wch: 30}, {wch: 20}, {wch: 30}];
+    
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Student Status");
+    XLSX.writeFile(wb, "Student_Status.xlsx");
   };
 
   return (
@@ -579,7 +664,7 @@ export default function FacultyDashboard() {
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">Student Response Status</h2>
                 <div className="flex space-x-3">
-                  <button onClick={() => exportToWord('export-status', 'Student_Status')} className="flex items-center px-4 py-2 bg-blue-50 text-blue-700 font-semibold rounded-lg hover:bg-blue-100 transition-colors">
+                  <button onClick={exportStatusWord} className="flex items-center px-4 py-2 bg-blue-50 text-blue-700 font-semibold rounded-lg hover:bg-blue-100 transition-colors">
                     <FileText className="w-4 h-4 mr-2" /> Export Word
                   </button>
                   <button onClick={exportStatusExcel} className="flex items-center px-4 py-2 bg-emerald-50 text-emerald-700 font-semibold rounded-lg hover:bg-emerald-100 transition-colors">

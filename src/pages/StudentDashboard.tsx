@@ -168,7 +168,7 @@ export default function StudentDashboard() {
               <p className="text-blue-200 font-medium tracking-wide">{student.register_number}</p>
             </div>
             
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-8 w-full md:w-auto">
+            <div className="grid grid-cols-2 sm:grid-cols-2 gap-4 sm:gap-8 w-full md:w-auto">
               <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
                 <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold mb-1">Department</p>
                 <p className="font-medium">{departmentName}</p>
@@ -176,10 +176,6 @@ export default function StudentDashboard() {
               <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
                 <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold mb-1">Year / Sem</p>
                 <p className="font-medium">Yr {student.year} • Sem {student.semester}</p>
-              </div>
-              <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
-                <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold mb-1">Section</p>
-                <p className="font-medium">{student.section}</p>
               </div>
             </div>
           </div>
