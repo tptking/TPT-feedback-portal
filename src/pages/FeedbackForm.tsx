@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { ArrowLeft, Send, CheckCircle2 } from 'lucide-react';
+import { Send, CheckCircle2, LogOut } from 'lucide-react';
 
 export default function FeedbackForm() {
   const { subjectId } = useParams();
@@ -124,7 +124,6 @@ export default function FeedbackForm() {
 
     try {
       // Calculate total score based on the max possible score (questions.length * 5)
-      const totalScore = Object.values(answers).reduce((a, b) => a + b, 0);
       
       const payload = {
         student_id: student.id,
@@ -199,7 +198,7 @@ export default function FeedbackForm() {
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback Submitted!</h2>
           <p className="text-gray-500 mb-6">Thank you for your valuable response. Your feedback has been recorded securely.</p>
-          <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
+          <p className="text-sm text-gray-400">Loading next module...</p>
         </div>
       </div>
     );
@@ -211,11 +210,14 @@ export default function FeedbackForm() {
       <div className="bg-[#1E3A8A] text-white pt-8 pb-16 px-4 sm:px-6 lg:px-8 shadow-md">
         <div className="max-w-4xl mx-auto">
           <button 
-            onClick={() => navigate('/student/dashboard')}
-            className="flex items-center text-blue-200 hover:text-white transition-colors mb-6 text-sm font-medium"
+            onClick={() => {
+              sessionStorage.removeItem('student_data');
+              navigate('/');
+            }}
+            className="inline-flex items-center w-max text-blue-200 hover:text-white transition-colors mb-6 text-sm font-medium bg-white/10 px-4 py-2 rounded-xl"
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
+            <LogOut className="w-4 h-4 mr-2" />
+            Save & Logout
           </button>
           <h1 className="text-3xl font-bold mb-2">{subject?.subject_name}</h1>
           <p className="text-blue-200 text-lg">
@@ -248,7 +250,7 @@ export default function FeedbackForm() {
                   <p className="text-lg font-medium text-gray-900 pt-1">{q.question_text}</p>
                 </div>
                 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pl-12">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pl-0 sm:pl-12 mt-3 sm:mt-0">
                   {ratings.map((rating) => {
                     const isSelected = answers[q.id] === rating.value;
                     return (

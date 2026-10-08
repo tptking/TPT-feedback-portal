@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit } from 'lucide-react';
@@ -152,12 +152,6 @@ export default function FacultyDashboard() {
   };
 
   // ----- EXPORT UTILS -----
-  const exportToExcel = (data: any[], filename: string) => {
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-    XLSX.writeFile(wb, `${filename}.xlsx`);
-  };
 
   const exportToWord = (htmlId: string, filename: string) => {
     const el = document.getElementById(htmlId);
@@ -580,7 +574,7 @@ export default function FacultyDashboard() {
                       <p className="text-sm font-medium text-gray-500">Code: {courseGrp.subject?.course_code}</p>
                     </div>
                     
-                    {courseGrp.faculties.map((fac, fIdx) => (
+                    {courseGrp.faculties.map((fac: any, fIdx: number) => (
                       <div key={fIdx} className="border-b border-gray-100 last:border-0">
                         <div className="bg-white p-4 border-b border-gray-100 flex justify-between items-center">
                           <p className="text-sm font-medium text-gray-600">Faculty: <span className="text-gray-900 font-bold text-base">{fac.faculty?.faculty_name}</span></p>
@@ -619,7 +613,7 @@ export default function FacultyDashboard() {
                               </tr>
                             </thead>
                             <tbody>
-                              {fac.qStats.map((q, i) => (
+                              {fac.qStats.map((q: any, i: number) => (
                                 <tr key={i} className="hover:bg-gray-50">
                                   <td className="border border-gray-300 px-2 py-3 font-medium">{i + 1}</td>
                                   <td className="border border-gray-300 px-4 py-3 text-left text-gray-900 font-medium">{q.question}</td>
@@ -635,19 +629,19 @@ export default function FacultyDashboard() {
                               <tr className="bg-gray-50 font-bold">
                                 <td colSpan={2} className="border border-gray-300 px-4 py-3 text-right">Total</td>
                                 <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc: number, q: any) => acc + q.c5, 0)}</td>
-                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc, q) => acc + q.c4, 0)}</td>
-                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc, q) => acc + q.c3, 0)}</td>
-                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc, q) => acc + q.c2, 0)}</td>
-                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc, q) => acc + q.c1, 0)}</td>
-                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc, q) => acc + q.obtained, 0)}</td>
+                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc: number, q: any) => acc + q.c4, 0)}</td>
+                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc: number, q: any) => acc + q.c3, 0)}</td>
+                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc: number, q: any) => acc + q.c2, 0)}</td>
+                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc: number, q: any) => acc + q.c1, 0)}</td>
+                                <td className="border border-gray-300 px-2 py-3">{fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0)}</td>
                                 <td className="border border-gray-300 px-2 py-3">
-                                  {fac.totalResponses > 0 ? ((fac.qStats.reduce((acc, q) => acc + q.obtained, 0) / fac.qStats.reduce((acc, q) => acc + q.max, 0)) * 100).toFixed(2) : "0.00"}
+                                  {fac.totalResponses > 0 ? ((fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0) / fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0)) * 100).toFixed(2) : "0.00"}
                                 </td>
                               </tr>
                             </tbody>
                           </table>
                           <div className="p-4 text-center border-t border-gray-200 bg-gray-50 font-bold text-lg text-gray-800 mt-4 rounded-xl border">
-                            Over All Percentage: {fac.totalResponses > 0 ? ((fac.qStats.reduce((acc, q) => acc + q.obtained, 0) / fac.qStats.reduce((acc, q) => acc + q.max, 0)) * 100).toFixed(2) : "0.00"}
+                            Over All Percentage: {fac.totalResponses > 0 ? ((fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0) / fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0)) * 100).toFixed(2) : "0.00"}
                           </div>
                         </div>
                       </div>
@@ -814,7 +808,7 @@ export default function FacultyDashboard() {
                           <td className="px-6 py-4 font-semibold text-gray-900">{c.subject_name}</td>
                           <td className="px-6 py-4 text-gray-600 font-medium">{c.course_code}</td>
                           <td className="px-6 py-4 text-gray-600 font-medium">
-                            {c.faculties.map((f, idx) => (
+                            {c.faculties.map((f: any, idx: number) => (
                               <div key={idx}>Teacher {idx + 1}: <span className="font-bold">{f}</span></div>
                             ))}
                           </td>

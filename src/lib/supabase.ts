@@ -29,7 +29,7 @@ const mockFaculty = [
 
 class MockSupabaseClient {
   auth = {
-    signInWithPassword: async ({ email, password }: { email: string; password?: string }) => {
+    signInWithPassword: async ({ email }: { email: string; password?: string }) => {
       // Mock faculty login
       if (email.startsWith('sangeetha')) {
         return { data: { user: { id: 'auth-1', email } }, error: null };
@@ -41,7 +41,7 @@ class MockSupabaseClient {
 
   from(table: string) {
     return {
-      select: (query: string = '*') => {
+      select: (_query: string = '*') => {
         return {
           eq: (column: string, value: string) => {
             return {

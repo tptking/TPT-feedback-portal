@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BookOpen, CheckCircle, Clock } from 'lucide-react';
+import { LogOut, BookOpen, CheckCircle } from 'lucide-react';
 
 interface Assignment {
   subject_id: string;
@@ -107,7 +107,16 @@ export default function StudentDashboard() {
           };
         });
 
+        // Find first uncompleted subject and route immediately
+        const firstUncompleted = groupedAssignments.find((a: any) => !a.isSubmitted);
+        if (firstUncompleted) {
+          navigate(`/student/feedback/${firstUncompleted.subject_id}`, { replace: true });
+          return; // Stop rendering this component
+        }
+
         setAssignments(groupedAssignments);
+      } else {
+        setAssignments([]);
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -129,152 +138,69 @@ export default function StudentDashboard() {
     );
   }
 
-  const completedCount = assignments.filter(a => a.isSubmitted).length;
-  const totalCount = assignments.length;
-  const progressPercentage = totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100);
+
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] font-sans">
+    <div className="min-h-screen bg-[#f8fafc] font-sans flex flex-col">
       {/* Navbar */}
       <nav className="bg-[#1E3A8A] text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-white rounded-full p-1">
+          <div className="flex justify-between items-center h-20">
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 bg-white rounded-full p-1 shadow-sm">
                 <img src="https://www.tpt.edu.in/assets/images/logo.jpg" alt="Logo" className="w-full h-full object-contain rounded-full" />
               </div>
-              <span className="font-bold text-xl tracking-wide">TPT Feedback</span>
+              <div className="flex flex-col min-w-0">
+                <h1 className="font-bold text-lg sm:text-xl tracking-wide truncate">TPT Feedback</h1>
+                <p className="text-blue-200 text-xs sm:text-sm font-medium truncate max-w-[150px] sm:max-w-none">{departmentName}</p>
+              </div>
             </div>
-            <button 
+            <button
               onClick={handleLogout}
-              className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-colors font-medium text-sm"
+              className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all"
             >
               <LogOut className="w-4 h-4" />
-              <span>Logout</span>
+              <span className="font-medium text-sm">Logout</span>
             </button>
           </div>
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* Student Profile Card */}
-        <div className="bg-[#1E3A8A] rounded-[24px] p-6 sm:p-8 text-white shadow-xl relative overflow-hidden mb-8">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
-          
-          <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-            <div className="flex flex-col">
-              <h1 className="text-3xl font-bold mb-1">{student.student_name}</h1>
-              <p className="text-blue-200 font-medium tracking-wide">{student.register_number}</p>
-            </div>
-            
-            <div className="grid grid-cols-2 sm:grid-cols-2 gap-4 sm:gap-8 w-full md:w-auto">
-              <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
-                <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold mb-1">Department</p>
-                <p className="font-medium">{departmentName}</p>
+      {/* Completion Screen */}
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="bg-white p-10 rounded-[24px] shadow-lg border border-gray-100 max-w-lg w-full text-center">
+          {!activeCycle || assignments.length === 0 ? (
+            <>
+              <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <BookOpen className="w-12 h-12 text-gray-300" />
               </div>
-              <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
-                <p className="text-xs text-blue-200 uppercase tracking-wider font-semibold mb-1">Year / Sem</p>
-                <p className="font-medium">Yr {student.year} • Sem {student.semester}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Feedback Progress Summary */}
-        {totalCount > 0 && (
-          <div className="bg-white rounded-[24px] p-6 shadow-sm border border-gray-100 mb-8 animate-fade-in">
-            <div className="flex justify-between items-end mb-3">
-              <div>
-                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Feedback Progress</h3>
-                <p className="text-xl font-bold text-gray-900">{completedCount} of {totalCount} Completed</p>
-              </div>
-              <span className="text-xl font-bold text-[#1E3A8A]">{progressPercentage}%</span>
-            </div>
-            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
-              <div 
-                className="bg-[#1E3A8A] h-3 rounded-full transition-all duration-1000 ease-out"
-                style={{ width: `${progressPercentage}%` }}
-              ></div>
-            </div>
-          </div>
-        )}
-
-        {/* Subjects Grid */}
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
-            <BookOpen className="w-6 h-6 mr-3 text-[#1E3A8A]" />
-            Your Subjects
-          </h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {assignments.map((assignment, index) => (
-              <div 
-                key={assignment.subject_id}
-                className="bg-white rounded-[24px] p-6 shadow-sm hover:shadow-md transition-all duration-300 border border-gray-100 flex flex-col h-full animate-fade-in"
-                style={{ animationDelay: `${index * 50}ms` }}
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">No Active Feedback</h2>
+              <p className="text-gray-500 mb-8">There is currently no active feedback cycle for your class.</p>
+              <button
+                onClick={handleLogout}
+                className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors"
               >
-                <div className="mb-4 flex-1">
-                  <div className="text-xs font-bold text-[#1E3A8A] bg-blue-50 w-fit px-3 py-1 rounded-full mb-3">
-                    {assignment.course_code}
-                  </div>
-                  <h3 className="text-lg font-bold text-gray-900 leading-tight mb-3">
-                    📘 {assignment.subject_name}
-                  </h3>
-                  <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                    <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Faculty</p>
-                    {assignment.faculties?.map((f, i) => (
-                      <div key={i} className="text-gray-900 font-medium text-sm mb-1 last:mb-0 flex items-center justify-between">
-                        <span>{f.faculty_name}</span>
-                        {f.isSubmitted && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-2 pt-4 border-t border-gray-100">
-                  <div className="flex items-center mb-4">
-                    <span className="text-sm font-semibold text-gray-500 mr-2">Status:</span>
-                    {assignment.isSubmitted ? (
-                      <span className="flex items-center text-emerald-600 font-bold text-sm bg-emerald-50 px-2 py-1 rounded-md">
-                        <CheckCircle className="w-4 h-4 mr-1" /> Completed
-                      </span>
-                    ) : (
-                      <span className="flex items-center text-amber-600 font-bold text-sm bg-amber-50 px-2 py-1 rounded-md">
-                        ● Pending
-                      </span>
-                    )}
-                  </div>
-
-                  {assignment.isSubmitted ? (
-                    <button
-                      disabled
-                      className="flex items-center justify-center w-full py-3.5 px-4 rounded-[16px] bg-gray-100 text-gray-400 font-bold text-sm cursor-not-allowed"
-                    >
-                      FEEDBACK SUBMITTED
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => navigate(`/student/feedback/${assignment.subject_id}`)}
-                      className="flex items-center justify-center w-full py-3.5 px-4 rounded-[16px] bg-[#1E3A8A] hover:bg-[#152e73] text-white font-bold text-sm transition-all transform hover:-translate-y-0.5 shadow-md shadow-blue-900/20"
-                    >
-                      GIVE FEEDBACK →
-                    </button>
-                  )}
-                </div>
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <CheckCircle className="w-12 h-12 text-emerald-500" />
               </div>
-            ))}
-
-            {(!activeCycle || assignments.length === 0) && (
-              <div className="col-span-full py-16 flex flex-col items-center justify-center bg-white rounded-[24px] border border-dashed border-gray-300">
-                <BookOpen className="w-12 h-12 text-gray-300 mb-4" />
-                <p className="text-gray-500 font-medium text-lg">No subjects available for feedback</p>
-                {!activeCycle && <p className="text-gray-400 text-sm mt-2">There is currently no active feedback cycle.</p>}
-              </div>
-            )}
-          </div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-3">All Feedback Completed!</h2>
+              <p className="text-gray-500 text-lg leading-relaxed mb-8">
+                You have successfully completed all your subject feedbacks for this semester. Thank you for your valuable responses!
+              </p>
+              <button
+                onClick={handleLogout}
+                className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors"
+              >
+                Logout Safely
+              </button>
+            </>
+          )}
         </div>
-
       </div>
     </div>
   );
