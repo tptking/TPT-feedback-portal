@@ -160,7 +160,6 @@ export default function Landing() {
                   name="registerNumber"
                   type="text"
                   required
-                  placeholder="e.g. A2407066"
                   className="w-full bg-transparent text-gray-900 font-semibold text-[15px] placeholder-gray-300 focus:outline-none uppercase"
                   value={registerNumber}
                   onChange={(e) => setRegisterNumber(e.target.value.toUpperCase())}
