@@ -77,20 +77,19 @@ export default function FeedbackForm() {
           .eq('active', true);
 
         if (fsa && cycle) {
-          const pending = [];
-          for (const f of fsa) {
-            const { count } = await supabase
-              .from('feedback_responses')
-              .select('*', { count: 'exact', head: true })
-              .eq('student_id', parsedStudent.id)
-              .eq('faculty_id', f.faculty_id)
-              .eq('subject_id', subjectId)
-              .eq('feedback_cycle_id', cycle.id);
+          const { data: userResponses } = await supabase
+            .from('feedback_responses')
+            .select('faculty_id')
+            .eq('student_id', parsedStudent.id)
+            .eq('subject_id', subjectId)
+            .eq('feedback_cycle_id', cycle.id);
             
-            if (!count || count === 0) {
-              pending.push({ id: f.faculty_id, faculty_name: f.faculty.faculty_name });
-            }
-          }
+          const submittedFaculties = new Set(userResponses?.map((r: any) => r.faculty_id) || []);
+
+          const pending = fsa
+            .filter((f: any) => !submittedFaculties.has(f.faculty_id))
+            .map((f: any) => ({ id: f.faculty_id, faculty_name: f.faculty.faculty_name }));
+
           setPendingFaculties(pending);
           if (pending.length > 0) {
             setFaculty(pending[0]);
@@ -136,13 +135,31 @@ export default function FeedbackForm() {
         status: 'COMPLETED'
       };
 
+      // PRE-FLIGHT CHECK: Ensure the student hasn't already submitted for this faculty
+      const { count } = await supabase
+        .from('feedback_responses')
+        .select('*', { count: 'exact', head: true })
+        .eq('student_id', student.id)
+        .eq('faculty_id', faculty.id)
+        .eq('subject_id', subject.id)
+        .eq('feedback_cycle_id', activeCycle.id);
+
+      if (count && count > 0) {
+        throw new Error('You have already submitted feedback for this subject and faculty. Duplicate submissions are not allowed.');
+      }
+
       const { data: responseData, error: insertError } = await supabase
         .from('feedback_responses')
         .insert([payload])
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        if (insertError.code === '23505') {
+          throw new Error('You have already submitted feedback for this subject and faculty. Duplicate submissions are not allowed.');
+        }
+        throw insertError;
+      }
 
       // Insert the 10 answer records
       const answerRecords = Object.entries(answers).map(([qId, rating]) => {

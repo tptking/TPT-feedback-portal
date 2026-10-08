@@ -71,35 +71,33 @@ export default function StudentDashboard() {
       if (fsaError) throw fsaError;
 
       if (fsaData && cycle) {
-        // 4. For each assignment, check if the student has already submitted feedback
-        const subjectsMap = new Map();
-        await Promise.all(
-          fsaData.map(async (assignment: any) => {
-            const { count } = await supabase
-              .from('feedback_responses')
-              .select('*', { count: 'exact', head: true })
-              .eq('student_id', studentInfo.id)
-              .eq('faculty_id', assignment.faculty_id)
-              .eq('subject_id', assignment.subject_id)
-              .eq('feedback_cycle_id', cycle.id);
+        // 4. Check which assignments the student has already submitted
+        const { data: userResponses } = await supabase
+          .from('feedback_responses')
+          .select('subject_id, faculty_id')
+          .eq('student_id', studentInfo.id)
+          .eq('feedback_cycle_id', cycle.id);
+          
+        const submittedSet = new Set(userResponses?.map((r: any) => `${r.subject_id}-${r.faculty_id}`) || []);
 
-            const isSub = (count && count > 0) ? true : false;
-            
-            if (!subjectsMap.has(assignment.subject_id)) {
-              subjectsMap.set(assignment.subject_id, {
-                subject_id: assignment.subject_id,
-                subject_name: assignment.subjects.subject_name,
-                course_code: assignment.subjects.course_code,
-                faculties: []
-              });
-            }
-            subjectsMap.get(assignment.subject_id).faculties.push({
-              faculty_id: assignment.faculty_id,
-              faculty_name: assignment.faculty.faculty_name,
-              isSubmitted: isSub
+        const subjectsMap = new Map();
+        fsaData.forEach((assignment: any) => {
+          const isSub = submittedSet.has(`${assignment.subject_id}-${assignment.faculty_id}`);
+          
+          if (!subjectsMap.has(assignment.subject_id)) {
+            subjectsMap.set(assignment.subject_id, {
+              subject_id: assignment.subject_id,
+              subject_name: assignment.subjects.subject_name,
+              course_code: assignment.subjects.course_code,
+              faculties: []
             });
-          })
-        );
+          }
+          subjectsMap.get(assignment.subject_id).faculties.push({
+            faculty_id: assignment.faculty_id,
+            faculty_name: assignment.faculty.faculty_name,
+            isSubmitted: isSub
+          });
+        });
         
         const groupedAssignments = Array.from(subjectsMap.values()).map((subj: any) => {
           const isFullySubmitted = subj.faculties.every((f: any) => f.isSubmitted);
