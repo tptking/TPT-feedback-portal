@@ -24,15 +24,26 @@ const mockStudents = [
 ];
 
 const mockFaculty = [
-  { id: 'f1', auth_user_id: 'auth-1', faculty_name: 'Mrs.R.Sangeetha', username: 'sangeetha', department_id: '6' }
+  { id: 'f1', auth_user_id: 'auth-1', faculty_name: 'Civil Engineering Admin', username: 'civildept', department_id: '1' },
+  { id: 'f2', auth_user_id: 'auth-2', faculty_name: 'Mechanical Engineering Admin', username: 'mechdept', department_id: '2' },
+  { id: 'f3', auth_user_id: 'auth-3', faculty_name: 'Electrical & Electronics Admin', username: 'eeedept', department_id: '3' },
+  { id: 'f4', auth_user_id: 'auth-4', faculty_name: 'Production Engineering Admin', username: 'proddept', department_id: '4' },
+  { id: 'f5', auth_user_id: 'auth-5', faculty_name: 'Textile Technology Admin', username: 'textiledept', department_id: '5' },
+  { id: 'f6', auth_user_id: 'auth-6', faculty_name: 'Computer Engineering Admin', username: 'computerdept', department_id: '6' },
+  { id: 'f7', auth_user_id: 'auth-7', faculty_name: 'CS & IT Admin', username: 'csitdept', department_id: '7' },
+  { id: 'f8', auth_user_id: 'auth-8', faculty_name: 'Electronics & Communication Admin', username: 'ecedept', department_id: '8' },
+  { id: 'f9', auth_user_id: 'auth-9', faculty_name: 'Architecture Admin', username: 'archdept', department_id: '9' },
+  { id: 'f10', auth_user_id: 'auth-10', faculty_name: 'AI & ML Admin', username: 'aimldept', department_id: '10' }
 ];
 
 class MockSupabaseClient {
   auth = {
     signInWithPassword: async ({ email }: { email: string; password?: string }) => {
       // Mock faculty login
-      if (email.startsWith('sangeetha')) {
-        return { data: { user: { id: 'auth-1', email } }, error: null };
+      const username = email.split('@')[0];
+      const fac = mockFaculty.find(f => f.username === username);
+      if (fac) {
+        return { data: { user: { id: fac.auth_user_id, email } }, error: null };
       }
       return { data: { user: null }, error: new Error('Invalid login') };
     },

@@ -52,6 +52,8 @@ export default function FeedbackForm() {
         const { data: cycle } = await supabase
           .from('feedback_cycles')
           .select('*')
+          .eq('department_id', parsedStudent.department_id)
+          .eq('year', parsedStudent.year)
           .eq('enabled', true)
           .single();
         setActiveCycle(cycle);

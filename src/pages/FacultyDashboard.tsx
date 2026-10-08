@@ -11,7 +11,8 @@ export default function FacultyDashboard() {
   
   const [faculty, setFaculty] = useState<any>(null);
   const [department, setDepartment] = useState<any>(null);
-  const [activeCycle, setActiveCycle] = useState<any>(null);
+  const [allCycles, setAllCycles] = useState<any[]>([]);
+  const [isMobile, setIsMobile] = useState(false);
   
   const [students, setStudents] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -20,10 +21,16 @@ export default function FacultyDashboard() {
   const [answers, setAnswers] = useState<any[]>([]);
   const [selectedYear, setSelectedYear] = useState<number>(3);
 
+  const activeCycle = allCycles.find(c => c.year === selectedYear);
+
   const [editModal, setEditModal] = useState<any>(null);
 
   useEffect(() => {
     initDashboard();
+    const checkMobile = () => setIsMobile(window.innerWidth < 1024);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
   const initDashboard = async () => {
@@ -55,17 +62,15 @@ export default function FacultyDashboard() {
         .single();
       setDepartment(dept);
 
-      // 3. Fetch Active Cycle for the Department
-      const { data: cycle } = await supabase
+      // 3. Fetch All Cycles for the Department
+      const { data: cycles } = await supabase
         .from('feedback_cycles')
         .select('*')
         .eq('department_id', fac.department_id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-      setActiveCycle(cycle);
+        .order('created_at', { ascending: false });
+      setAllCycles(cycles || []);
 
-      if (cycle) {
+      if (cycles && cycles.length > 0) {
         // Fetch Students in Department
         const { data: stus } = await supabase
           .from('students')
@@ -91,12 +96,13 @@ export default function FacultyDashboard() {
           .eq('department_id', fac.department_id);
         setAssignments(asgs || []);
 
-        // Fetch Responses for the Cycle
+        // Fetch Responses for all Cycles
+        const cycleIds = cycles.map((c: any) => c.id);
         const { data: resps } = await supabase
           .from('feedback_responses')
           .select('*')
           .eq('department_id', fac.department_id)
-          .eq('feedback_cycle_id', cycle.id);
+          .in('feedback_cycle_id', cycleIds);
         setResponses(resps || []);
 
         // Fetch Answers for those responses
@@ -130,7 +136,7 @@ export default function FacultyDashboard() {
       .from('feedback_cycles')
       .update({ enabled: newStatus })
       .eq('id', activeCycle.id);
-    setActiveCycle({ ...activeCycle, enabled: newStatus });
+    setAllCycles(prev => prev.map(c => c.id === activeCycle.id ? { ...c, enabled: newStatus } : c));
   };
 
   const saveAssignmentEdit = async (e: React.FormEvent) => {
@@ -245,7 +251,7 @@ export default function FacultyDashboard() {
   const getFilteredData = () => {
     const filteredStudents = students.filter(s => s.year === selectedYear);
     const studentIds = new Set(filteredStudents.map(s => s.id));
-    const filteredResponses = responses.filter(r => studentIds.has(r.student_id));
+    const filteredResponses = responses.filter(r => studentIds.has(r.student_id) && activeCycle && r.feedback_cycle_id === activeCycle.id);
     const filteredAssignments = assignments.filter(a => a.year === selectedYear);
     return { filteredStudents, filteredResponses, filteredAssignments };
   };
@@ -363,6 +369,18 @@ export default function FacultyDashboard() {
     return (
       <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1E3A8A]"></div>
+      </div>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 text-center font-sans">
+         <div className="w-20 h-20 mb-6 bg-red-100 rounded-full flex items-center justify-center">
+            <XCircle className="w-10 h-10 text-red-500" />
+         </div>
+         <h1 className="text-2xl font-bold text-gray-900 mb-2">Desktop Access Only</h1>
+         <p className="text-gray-500 max-w-md">The Faculty Dashboard contains complex data tables that require a larger screen. Please access this portal from a desktop or laptop computer.</p>
       </div>
     );
   }

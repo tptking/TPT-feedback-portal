@@ -46,6 +46,8 @@ export default function StudentDashboard() {
       const { data: cycle } = await supabase
         .from('feedback_cycles')
         .select('*')
+        .eq('department_id', studentInfo.department_id)
+        .eq('year', studentInfo.year)
         .eq('enabled', true)
         .single();
       
