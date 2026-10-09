@@ -108,11 +108,22 @@ export default function FacultyDashboard() {
         // Fetch Answers for those responses
         if (resps && resps.length > 0) {
           const respIds = resps.map((r: any) => r.id);
-          const { data: ans } = await supabase
-            .from('feedback_answers')
-            .select('*')
-            .in('response_id', respIds);
-          setAnswers(ans || []);
+          const allAnswers = [];
+          
+          // Fetch answers in chunks to avoid the 1000-row limit in Supabase
+          const CHUNK_SIZE = 50;
+          for (let i = 0; i < respIds.length; i += CHUNK_SIZE) {
+            const chunk = respIds.slice(i, i + CHUNK_SIZE);
+            const { data: ansChunk } = await supabase
+              .from('feedback_answers')
+              .select('*')
+              .in('response_id', chunk);
+            
+            if (ansChunk) {
+              allAnswers.push(...ansChunk);
+            }
+          }
+          setAnswers(allAnswers);
         } else {
           setAnswers([]);
         }
