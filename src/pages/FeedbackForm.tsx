@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Send, CheckCircle2, LogOut } from 'lucide-react';
+import { Send, LogOut } from 'lucide-react';
 
 export default function FeedbackForm() {
   const { subjectId } = useParams();
@@ -18,7 +18,7 @@ export default function FeedbackForm() {
   
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+
   const [error, setError] = useState('');
 
   const ratings = [
@@ -94,7 +94,7 @@ export default function FeedbackForm() {
           if (pending.length > 0) {
             setFaculty(pending[0]);
           } else {
-            setSubmitted(true);
+            navigate('/student/dashboard', { replace: true });
           }
         }
 
