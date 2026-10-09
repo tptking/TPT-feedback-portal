@@ -187,9 +187,6 @@ export default function FeedbackForm() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
         setSubmitted(true);
-        setTimeout(() => {
-          navigate('/student/dashboard');
-        }, 3000);
       }
       
     } catch (err: any) {
@@ -217,7 +214,12 @@ export default function FeedbackForm() {
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback Submitted!</h2>
           <p className="text-gray-500 mb-6">Thank you for your valuable response. Your feedback has been recorded securely.</p>
-          <p className="text-sm text-gray-400">Loading next module...</p>
+          <button
+            onClick={() => navigate('/student/dashboard')}
+            className="w-full py-3 px-4 bg-[#1E3A8A] text-white rounded-xl font-bold hover:bg-[#152e73] transition-colors"
+          >
+            Save & Continue
+          </button>
         </div>
       </div>
     );

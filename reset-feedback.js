@@ -15,7 +15,7 @@ async function reset() {
   const { data: students, error: studentError } = await supabase
     .from('students')
     .select('id')
-    .in('year', [1, 2]);
+    .in('year', [2, 3]);
 
   if (studentError) {
     console.error("Error fetching students:", studentError);
