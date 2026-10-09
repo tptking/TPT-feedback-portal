@@ -595,7 +595,12 @@ export default function FacultyDashboard() {
                     {courseGrp.faculties.map((fac: any, fIdx: number) => (
                       <div key={fIdx} className="border-b border-gray-100 last:border-0">
                         <div className="bg-white p-4 border-b border-gray-100 flex justify-between items-center">
-                          <p className="text-sm font-medium text-gray-600">Faculty: <span className="text-gray-900 font-bold text-base">{fac.faculty?.faculty_name}</span></p>
+                          <div className="flex items-center space-x-4">
+                            <p className="text-sm font-medium text-gray-600">Faculty: <span className="text-gray-900 font-bold text-base">{fac.faculty?.faculty_name}</span></p>
+                            <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-full border border-blue-200 shadow-sm">
+                              {fac.totalResponses} Responses
+                            </span>
+                          </div>
                           
                           <div className="flex items-center space-x-3">
                             <button onClick={() => exportToWord(`export-table-${fac.faculty?.id}-${courseGrp.subject?.id}`, `Feedback_${fac.faculty?.faculty_name}`)} className="flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors border border-blue-100">
