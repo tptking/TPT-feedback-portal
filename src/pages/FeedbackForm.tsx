@@ -186,7 +186,7 @@ export default function FeedbackForm() {
         setAnswers({});
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
-        setSubmitted(true);
+        navigate('/student/dashboard', { replace: true });
       }
       
     } catch (err: any) {
@@ -205,25 +205,6 @@ export default function FeedbackForm() {
     );
   }
 
-  if (submitted) {
-    return (
-      <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-[24px] shadow-lg max-w-md w-full text-center animate-fade-in border border-gray-100">
-          <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle2 className="w-10 h-10 text-emerald-500" />
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback Submitted!</h2>
-          <p className="text-gray-500 mb-6">Thank you for your valuable response. Your feedback has been recorded securely.</p>
-          <button
-            onClick={() => navigate('/student/dashboard')}
-            className="w-full py-3 px-4 bg-[#1E3A8A] text-white rounded-xl font-bold hover:bg-[#152e73] transition-colors"
-          >
-            Save & Continue
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-[#f8fafc] pb-20 font-sans">
@@ -300,7 +281,7 @@ export default function FeedbackForm() {
               disabled={submitting}
               className="flex items-center justify-center px-8 py-4 rounded-[20px] bg-[#1E3A8A] hover:bg-[#152e73] text-white font-bold text-lg transition-all shadow-[0_8px_20px_rgb(30,58,138,0.3)] hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              {submitting ? 'Submitting...' : 'Submit Feedback'}
+              {submitting ? 'Saving...' : 'Save & Continue'}
               {!submitting && <Send className="w-5 h-5 ml-3" />}
             </button>
           </div>
