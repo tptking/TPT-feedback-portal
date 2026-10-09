@@ -221,7 +221,7 @@ export default function FeedbackForm() {
             <LogOut className="w-4 h-4 mr-2" />
             Save & Logout
           </button>
-          <h1 className="text-3xl font-bold mb-2">{subject?.subject_name}</h1>
+          <h1 className="text-3xl font-bold mb-2">{subject?.course_code} - {subject?.subject_name}</h1>
           <p className="text-blue-200 text-lg">
             Faculty: <span className="text-white font-medium">{faculty?.faculty_name || 'Not Assigned'}</span>
           </p>
