@@ -27,10 +27,16 @@ export default function FacultyDashboard() {
 
   useEffect(() => {
     initDashboard();
+    const interval = setInterval(() => {
+      initDashboard();
+    }, 10000);
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
     window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+      clearInterval(interval);
+    };
   }, []);
 
   const initDashboard = async () => {
