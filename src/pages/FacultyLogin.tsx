@@ -45,7 +45,8 @@ export default function FacultyLogin() {
         .from('faculty')
         .select('*')
         .eq('auth_user_id', authData.user.id)
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (facultyError || !facultyData) {
         setError('Unauthorised Access: Not a faculty member');
