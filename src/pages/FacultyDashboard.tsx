@@ -629,8 +629,38 @@ export default function FacultyDashboard() {
                         </div>
                         <div className="overflow-x-auto p-4" id={`export-table-${fac.faculty?.id}-${courseGrp.subject?.id}`}>
                           <div style={{ display: 'none' }} className="print-header mb-4">
-                            <h2>{courseGrp.subject?.subject_name} ({courseGrp.subject?.course_code})</h2>
-                            <h3>Faculty: {fac.faculty?.faculty_name}</h3>
+                            <h2 style={{ textAlign: 'center', fontSize: '18px', fontWeight: 'bold', marginBottom: '4px' }}>Programme Name: {department?.department_name}</h2>
+                            <h3 style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'normal', marginBottom: '20px' }}>
+                              {selectedYear === 2 ? 'II' : 'III'} Year / {selectedYear === 2 ? '3' : '5'} Semester / A - Section
+                            </h3>
+                            
+                            <div style={{ marginBottom: '20px' }}>
+                              <p style={{ margin: '4px 0' }}><strong>Course Name:</strong> {courseGrp.subject?.subject_name}</p>
+                              <p style={{ margin: '4px 0' }}><strong>Faculty Name:</strong> {fac.faculty?.faculty_name}</p>
+                              <p style={{ margin: '4px 0' }}><strong>Total Strength:</strong> {resultData.totalDeptStudents}</p>
+                              <p style={{ margin: '4px 0' }}><strong>Max.Mark:</strong> {fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0)}</p>
+                              <p style={{ margin: '4px 0' }}><strong>Appeared:</strong> {fac.totalResponses}</p>
+                              <p style={{ margin: '4px 0' }}><strong>Marks Secured:</strong> {fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0)}</p>
+                              <p style={{ margin: '4px 0' }}>
+                                <strong>Overall feedback:</strong> {fac.totalResponses > 0 
+                                      ? ((fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0) / fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0)) * 100).toFixed(2)
+                                      : '0.00'} %
+                              </p>
+                              <p style={{ margin: '4px 0' }}><strong>Grade:</strong> {(() => {
+                                      const max = fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0);
+                                      const obtained = fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0);
+                                      const percentage = max > 0 ? (obtained / max) * 100 : 0;
+                                      if (percentage >= 91) return 'A+';
+                                      if (percentage >= 81) return 'A';
+                                      if (percentage >= 71) return 'B';
+                                      if (percentage >= 61) return 'C';
+                                      if (percentage > 0) return 'D';
+                                      return '-';
+                                    })()}
+                              </p>
+                            </div>
+                            
+                            <h3 style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '10px' }}>Question Wise Analysis</h3>
                           </div>
                           <table className="w-full text-sm text-center border-collapse border border-gray-200">
                             <thead className="bg-gray-100 text-gray-700 font-bold text-xs">
@@ -676,6 +706,32 @@ export default function FacultyDashboard() {
                           </table>
                           <div className="p-4 text-center border-t border-gray-200 bg-gray-50 font-bold text-lg text-gray-800 mt-4 rounded-xl border">
                             Over All Percentage: {fac.totalResponses > 0 ? ((fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0) / fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0)) * 100).toFixed(2) : "0.00"}
+                          </div>
+
+                          <div style={{ display: 'none' }} className="print-footer">
+                            <p style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'bold', margin: '20px 0' }}>
+                              A+:&gt;=91, A:81-90, B:71-80, C:61-70, D:&lt;=60
+                            </p>
+                            <p style={{ textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '60px' }}>
+                              Over All Percentage: {fac.totalResponses > 0 ? ((fac.qStats.reduce((acc: number, q: any) => acc + q.obtained, 0) / fac.qStats.reduce((acc: number, q: any) => acc + q.max, 0)) * 100).toFixed(2) : "0.00"}
+                            </p>
+                            
+                            <table style={{ width: '100%', border: 'none', marginTop: '60px' }}>
+                              <tbody>
+                                <tr>
+                                  <td style={{ border: 'none', textAlign: 'center', width: '33%', verticalAlign: 'bottom', paddingBottom: '20px' }}>
+                                    <strong>Remarks<br/>by<br/>HOD</strong>
+                                  </td>
+                                  <td style={{ border: 'none', textAlign: 'center', width: '33%', verticalAlign: 'bottom', paddingBottom: '20px' }}>
+                                    <strong>Faculty-in-charge</strong>
+                                  </td>
+                                  <td style={{ border: 'none', textAlign: 'center', width: '33%', verticalAlign: 'bottom', paddingBottom: '20px' }}>
+                                    <strong>Head of Department</strong><br/>
+                                    [For office use only]
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
                           </div>
                         </div>
                       </div>
