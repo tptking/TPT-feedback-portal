@@ -102,18 +102,33 @@ export default function FacultyDashboard() {
           .eq('department_id', fac.department_id);
         setAssignments(asgs || []);
 
-        // Fetch Responses for all Cycles
+        // Fetch Responses for all Cycles (paginated to avoid 1000 row limit)
         const cycleIds = cycles.map((c: any) => c.id);
-        const { data: resps } = await supabase
-          .from('feedback_responses')
-          .select('*')
-          .eq('department_id', fac.department_id)
-          .in('feedback_cycle_id', cycleIds);
-        setResponses(resps || []);
+        let allResps: any[] = [];
+        let rStart = 0;
+        const rLimit = 1000;
+        
+        while (true) {
+          const { data: respsChunk } = await supabase
+            .from('feedback_responses')
+            .select('*')
+            .eq('department_id', fac.department_id)
+            .in('feedback_cycle_id', cycleIds)
+            .range(rStart, rStart + rLimit - 1);
+            
+          if (respsChunk && respsChunk.length > 0) {
+            allResps = [...allResps, ...respsChunk];
+            if (respsChunk.length < rLimit) break;
+            rStart += rLimit;
+          } else {
+            break;
+          }
+        }
+        setResponses(allResps);
 
         // Fetch Answers for those responses
-        if (resps && resps.length > 0) {
-          const respIds = resps.map((r: any) => r.id);
+        if (allResps && allResps.length > 0) {
+          const respIds = allResps.map((r: any) => r.id);
           const allAnswers = [];
           
           // Fetch answers in chunks to avoid the 1000-row limit in Supabase
