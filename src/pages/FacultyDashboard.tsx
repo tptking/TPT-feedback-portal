@@ -338,7 +338,19 @@ export default function FacultyDashboard() {
     });
 
     const overallPercentage = totalMaxMarks > 0 ? ((totalObtainedMarks / totalMaxMarks) * 100).toFixed(2) : "0.00";
-    const completedStudents = new Set(filteredResponses.map(r => r.student_id)).size;
+    
+    let fullyCompletedCount = 0;
+    filteredStudents.forEach(s => {
+      const studentAssignments = filteredAssignments.filter(a => a.semester === s.semester && a.section === s.section);
+      const requiredCount = studentAssignments.length;
+      const sResponses = filteredResponses.filter(r => r.student_id === s.id);
+      const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
+      if (requiredCount > 0 && completedSet.size >= requiredCount) {
+        fullyCompletedCount++;
+      }
+    });
+
+    const completedStudents = fullyCompletedCount;
     const totalDeptStudents = filteredStudents.length;
 
     return { groupedCourseStats, overallPercentage, completedStudents, totalDeptStudents, totalQuestions };
@@ -347,31 +359,35 @@ export default function FacultyDashboard() {
   const getStudentStatusData = () => {
     if (!activeCycle) return { completed: [], pending: [] };
     
-    const { filteredStudents, filteredResponses } = getFilteredData();
+    const { filteredStudents, filteredResponses, filteredAssignments } = getFilteredData();
     
-    // Check if a student has completed ANY feedback, or ALL required feedback?
-    // Based on user prompt, we just list students who submitted vs pending overall.
-    // For simplicity, if they have any response, they are completed.
-    const completedIds = new Set(filteredResponses.map(r => r.student_id));
-    
-    const completed = filteredStudents.filter(s => completedIds.has(s.id)).map(s => {
-      // Find latest submission time
-      const sResponses = filteredResponses.filter(r => r.student_id === s.id);
-      const latest = sResponses.reduce((a, b) => new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, sResponses[0]);
-      return {
-        Register_Number: s.register_number,
-        Student_Name: s.student_name,
-        Status: 'Completed',
-        Submitted: latest ? new Date(latest.submitted_at).toLocaleString() : 'N/A'
-      };
-    });
+    const completed: any[] = [];
+    const pending: any[] = [];
 
-    const pending = filteredStudents.filter(s => !completedIds.has(s.id)).map(s => ({
-      Register_Number: s.register_number,
-      Student_Name: s.student_name,
-      Status: 'Pending',
-      Submitted: '-'
-    }));
+    filteredStudents.forEach(s => {
+      const studentAssignments = filteredAssignments.filter(a => a.semester === s.semester && a.section === s.section);
+      const requiredCount = studentAssignments.length;
+      const sResponses = filteredResponses.filter(r => r.student_id === s.id);
+      const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
+      const completedCount = completedSet.size;
+
+      if (requiredCount > 0 && completedCount >= requiredCount) {
+        const latest = sResponses.reduce((a, b) => new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, sResponses[0]);
+        completed.push({
+          Register_Number: s.register_number,
+          Student_Name: s.student_name,
+          Status: 'Completed',
+          Submitted: latest ? new Date(latest.submitted_at).toLocaleString() : 'N/A'
+        });
+      } else {
+        pending.push({
+          Register_Number: s.register_number,
+          Student_Name: s.student_name,
+          Status: requiredCount === 0 ? 'No Subjects' : `Pending (${completedCount}/${requiredCount})`,
+          Submitted: '-'
+        });
+      }
+    });
 
     return { completed, pending };
   };
@@ -765,7 +781,7 @@ export default function FacultyDashboard() {
                               <td className="px-6 py-3 font-semibold text-gray-900">{s.Register_Number}</td>
                               <td className="px-6 py-3 font-medium text-gray-700">{s.Student_Name}</td>
                               <td className="px-6 py-3 text-center">
-                                <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-md text-xs font-bold uppercase">Pending</span>
+                                <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-md text-xs font-bold uppercase">{s.Status}</span>
                               </td>
                             </tr>
                           ))}
