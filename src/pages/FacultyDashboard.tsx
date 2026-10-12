@@ -102,7 +102,7 @@ export default function FacultyDashboard() {
           .eq('department_id', fac.department_id);
         setAssignments(asgs || []);
 
-        // Fetch Responses for all Cycles (paginated to avoid 1000 row limit)
+        // Fetch Responses for all Cycles (paginated with explicit order to ensure 100% complete data)
         const cycleIds = cycles.map((c: any) => c.id);
         let allResps: any[] = [];
         let rStart = 0;
@@ -114,6 +114,7 @@ export default function FacultyDashboard() {
             .select('*')
             .eq('department_id', fac.department_id)
             .in('feedback_cycle_id', cycleIds)
+            .order('id', { ascending: true })
             .range(rStart, rStart + rLimit - 1);
             
           if (respsChunk && respsChunk.length > 0) {
@@ -126,24 +127,25 @@ export default function FacultyDashboard() {
         }
         setResponses(allResps);
 
-        // Fetch Answers for those responses
+        // Fetch Answers for those responses in parallel chunks (up to 80 responses per chunk = ~800 answers, under 1000 row limit)
         if (allResps && allResps.length > 0) {
           const respIds = allResps.map((r: any) => r.id);
-          const allAnswers = [];
-          
-          // Fetch answers in chunks to avoid the 1000-row limit in Supabase
-          const CHUNK_SIZE = 50;
+          const CHUNK_SIZE = 80;
+          const chunks = [];
           for (let i = 0; i < respIds.length; i += CHUNK_SIZE) {
-            const chunk = respIds.slice(i, i + CHUNK_SIZE);
-            const { data: ansChunk } = await supabase
-              .from('feedback_answers')
-              .select('*')
-              .in('response_id', chunk);
-            
-            if (ansChunk) {
-              allAnswers.push(...ansChunk);
-            }
+            chunks.push(respIds.slice(i, i + CHUNK_SIZE));
           }
+          
+          const ansResults = await Promise.all(
+            chunks.map(chunk => 
+              supabase
+                .from('feedback_answers')
+                .select('*')
+                .in('response_id', chunk)
+            )
+          );
+          
+          const allAnswers = ansResults.flatMap(r => r.data || []);
           setAnswers(allAnswers);
         } else {
           setAnswers([]);
