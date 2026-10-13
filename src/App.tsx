@@ -16,6 +16,7 @@ function App() {
 
         {/* Student Routes */}
         <Route path="/student/dashboard" element={<StudentDashboard />} />
+        <Route path="/student/feedback" element={<FeedbackForm />} />
         <Route path="/student/feedback/:subjectId" element={<FeedbackForm />} />
 
         {/* Faculty Routes */}

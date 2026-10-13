@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw } from 'lucide-react';
+import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function FacultyDashboard() {
@@ -24,12 +24,230 @@ export default function FacultyDashboard() {
   const activeCycle = allCycles.find(c => c.year === selectedYear);
 
   const [editModal, setEditModal] = useState<any>(null);
+  const [loadingAnswers, setLoadingAnswers] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  // Keep references to latest state to avoid stale React closures in background polling
+  const facultyRef = useRef<any>(null);
+  const allCyclesRef = useRef<any[]>([]);
+  const activeTabRef = useRef<'results' | 'status' | 'control'>('results');
+  const responsesRef = useRef<any[]>([]);
 
   useEffect(() => {
-    initDashboard();
+    facultyRef.current = faculty;
+  }, [faculty]);
+
+  useEffect(() => {
+    allCyclesRef.current = allCycles;
+  }, [allCycles]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    responsesRef.current = responses;
+  }, [responses]);
+
+  // Helper to fetch all responses for the cycles (paginated, lightweight)
+  const fetchResponsesData = async (deptId: string, cyclesList: any[]) => {
+    const cycleIds = cyclesList.map((c: any) => c.id);
+    if (cycleIds.length === 0) return [];
+
+    let allResps: any[] = [];
+    let rStart = 0;
+    const rLimit = 1000;
+
+    while (true) {
+      const { data: respsChunk, error: respsError } = await supabase
+        .from('feedback_responses')
+        .select('*')
+        .eq('department_id', deptId)
+        .in('feedback_cycle_id', cycleIds)
+        .order('id', { ascending: true })
+        .range(rStart, rStart + rLimit - 1);
+
+      if (respsError) {
+        console.error('Error fetching responses chunk:', respsError);
+        throw new Error(`Failed to fetch feedback responses: ${respsError.message}`);
+      }
+
+      if (respsChunk && respsChunk.length > 0) {
+        allResps = [...allResps, ...respsChunk];
+        if (respsChunk.length < rLimit) break;
+        rStart += rLimit;
+      } else {
+        break;
+      }
+    }
+    return allResps;
+  };
+
+  // Helper to fetch detailed answers in chunks of 80 response IDs
+  const fetchAnswersForResponses = async (respList: any[]) => {
+    if (!respList || respList.length === 0) return [];
+
+    const respIds = respList.map((r: any) => r.id);
+    const CHUNK_SIZE = 80;
+    const chunks = [];
+    for (let i = 0; i < respIds.length; i += CHUNK_SIZE) {
+      chunks.push(respIds.slice(i, i + CHUNK_SIZE));
+    }
+
+    const ansResults = await Promise.all(
+      chunks.map(async chunk => {
+        const { data, error } = await supabase
+          .from('feedback_answers')
+          .select('*')
+          .in('response_id', chunk);
+        if (error) {
+          console.error('Error fetching answers chunk:', error);
+          throw new Error(`Failed to load feedback answers: ${error.message}`);
+        }
+        return data || [];
+      })
+    );
+
+    return ansResults.flat();
+  };
+
+  // Full initialization (Runs on mount or manual "Refresh Data")
+  const initDashboard = async (forceRefreshAnswers = true) => {
+    setDashboardError(null);
+    try {
+      // 1. Authenticate Faculty
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        navigate('/');
+        return;
+      }
+
+      const { data: fac, error: facError } = await supabase
+        .from('faculty')
+        .select('*')
+        .eq('auth_user_id', authData.user.id)
+        .single();
+
+      if (facError || !fac) {
+        console.error('Faculty fetch error:', facError);
+        navigate('/');
+        return;
+      }
+      setFaculty(fac);
+      facultyRef.current = fac;
+
+      // 2. Fetch Department
+      const { data: dept, error: deptError } = await supabase
+        .from('departments')
+        .select('*')
+        .eq('id', fac.department_id)
+        .single();
+      if (deptError) {
+        throw new Error(`Failed to load department: ${deptError.message}`);
+      }
+      setDepartment(dept);
+
+      // 3. Fetch All Cycles for the Department
+      const { data: cycles, error: cyclesError } = await supabase
+        .from('feedback_cycles')
+        .select('*')
+        .eq('department_id', fac.department_id)
+        .order('created_at', { ascending: false });
+      if (cyclesError) {
+        throw new Error(`Failed to load feedback cycles: ${cyclesError.message}`);
+      }
+      setAllCycles(cycles || []);
+      allCyclesRef.current = cycles || [];
+
+      if (cycles && cycles.length > 0) {
+        // Fetch Students in Department
+        const { data: stus, error: stusError } = await supabase
+          .from('students')
+          .select('*')
+          .eq('department_id', fac.department_id);
+        if (stusError) {
+          throw new Error(`Failed to load students: ${stusError.message}`);
+        }
+        setStudents(stus || []);
+
+        // Fetch Questions
+        const { data: qs, error: qsError } = await supabase
+          .from('feedback_questions')
+          .select('*')
+          .order('question_number', { ascending: true });
+        if (qsError) {
+          throw new Error(`Failed to load feedback questions: ${qsError.message}`);
+        }
+        setQuestions(qs || []);
+
+        // Fetch Assignments (Courses) for Department
+        const { data: asgs, error: asgsError } = await supabase
+          .from('faculty_subject_assignments')
+          .select(`
+            id, faculty_id, subject_id, active, year, semester, section,
+            faculty:faculty_id (faculty_name),
+            subjects:subject_id (subject_name, course_code)
+          `)
+          .eq('department_id', fac.department_id);
+        if (asgsError) {
+          throw new Error(`Failed to load course assignments: ${asgsError.message}`);
+        }
+        setAssignments(asgs || []);
+
+        // Fetch Responses for all Cycles (paginated, fast)
+        const allResps = await fetchResponsesData(fac.department_id, cycles);
+        setResponses(allResps);
+        responsesRef.current = allResps;
+
+        // Smart Initial Year Selection: If Year 3 has 0 submissions and Year 2 has submissions, default to Year 2
+        const y3Cycle = cycles.find((c: any) => c.year === 3);
+        const y2Cycle = cycles.find((c: any) => c.year === 2);
+        const hasYear3Responses = y3Cycle && allResps.some((r: any) => r.feedback_cycle_id === y3Cycle.id);
+        const hasYear2Responses = y2Cycle && allResps.some((r: any) => r.feedback_cycle_id === y2Cycle.id);
+        if (!hasYear3Responses && hasYear2Responses) {
+          setSelectedYear(2);
+        }
+
+        // Fetch Answers for those responses (detailed analytics)
+        if (forceRefreshAnswers || activeTabRef.current === 'results') {
+          setLoadingAnswers(true);
+          const allAnswers = await fetchAnswersForResponses(allResps);
+          setAnswers(allAnswers);
+          setLoadingAnswers(false);
+        }
+      }
+    } catch (err: any) {
+      console.error('Initialization error:', err);
+      setDashboardError(err.message || 'Failed to initialize dashboard data.');
+    } finally {
+      setLoading(false);
+      setLoadingAnswers(false);
+    }
+  };
+
+  // Background poll: ONLY fetch responses (zero feedback_answers queries)
+  // Uses refs to ensure no stale closure over faculty or allCycles
+  const pollResponsesBackground = async () => {
+    const currentFaculty = facultyRef.current;
+    const currentCycles = allCyclesRef.current;
+    if (!currentFaculty || !currentCycles || currentCycles.length === 0) return;
+    try {
+      const allResps = await fetchResponsesData(currentFaculty.department_id, currentCycles);
+      setResponses(allResps);
+      responsesRef.current = allResps;
+    } catch (err: any) {
+      console.error('Background responses poll error:', err);
+      // Log silently during background polling to avoid interrupting active UI
+    }
+  };
+
+  useEffect(() => {
+    initDashboard(true);
+    // Background polling: 30 seconds interval, ONLY queries feedback_responses
     const interval = setInterval(() => {
-      initDashboard();
-    }, 10000);
+      pollResponsesBackground();
+    }, 30000);
+
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
     window.addEventListener('resize', checkMobile);
@@ -39,124 +257,29 @@ export default function FacultyDashboard() {
     };
   }, []);
 
-  const initDashboard = async () => {
-    try {
-      // 1. Authenticate Faculty
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData.user) {
-        navigate('/');
-        return;
+  // When user switches to 'results' tab or when new responses arrive while on 'results' tab, ensure answers are loaded/synchronized
+  useEffect(() => {
+    if (activeTab === 'results' && responses.length > 0 && !loadingAnswers) {
+      // If answers have never been loaded or if responses increased while viewing results
+      const existingRespIds = new Set(answers.map((a: any) => a.response_id));
+      const hasMissingAnswers = responses.some((r: any) => !existingRespIds.has(r.id));
+
+      if (answers.length === 0 || hasMissingAnswers) {
+        setLoadingAnswers(true);
+        setDashboardError(null);
+        fetchAnswersForResponses(responses)
+          .then(allAnswers => {
+            setAnswers(allAnswers);
+            setLoadingAnswers(false);
+          })
+          .catch(err => {
+            console.error('Failed to load answers for Results tab:', err);
+            setDashboardError(err.message || 'Failed to load detailed answers for results.');
+            setLoadingAnswers(false);
+          });
       }
-
-      const { data: fac } = await supabase
-        .from('faculty')
-        .select('*')
-        .eq('auth_user_id', authData.user.id)
-        .single();
-
-      if (!fac) {
-        navigate('/');
-        return;
-      }
-      setFaculty(fac);
-
-      // 2. Fetch Department
-      const { data: dept } = await supabase
-        .from('departments')
-        .select('*')
-        .eq('id', fac.department_id)
-        .single();
-      setDepartment(dept);
-
-      // 3. Fetch All Cycles for the Department
-      const { data: cycles } = await supabase
-        .from('feedback_cycles')
-        .select('*')
-        .eq('department_id', fac.department_id)
-        .order('created_at', { ascending: false });
-      setAllCycles(cycles || []);
-
-      if (cycles && cycles.length > 0) {
-        // Fetch Students in Department
-        const { data: stus } = await supabase
-          .from('students')
-          .select('*')
-          .eq('department_id', fac.department_id);
-        setStudents(stus || []);
-
-        // Fetch Questions
-        const { data: qs } = await supabase
-          .from('feedback_questions')
-          .select('*')
-          .order('question_number', { ascending: true });
-        setQuestions(qs || []);
-
-        // Fetch Assignments (Courses) for Department
-        const { data: asgs } = await supabase
-          .from('faculty_subject_assignments')
-          .select(`
-            id, faculty_id, subject_id, active, year, semester, section,
-            faculty:faculty_id (faculty_name),
-            subjects:subject_id (subject_name, course_code)
-          `)
-          .eq('department_id', fac.department_id);
-        setAssignments(asgs || []);
-
-        // Fetch Responses for all Cycles (paginated with explicit order to ensure 100% complete data)
-        const cycleIds = cycles.map((c: any) => c.id);
-        let allResps: any[] = [];
-        let rStart = 0;
-        const rLimit = 1000;
-        
-        while (true) {
-          const { data: respsChunk } = await supabase
-            .from('feedback_responses')
-            .select('*')
-            .eq('department_id', fac.department_id)
-            .in('feedback_cycle_id', cycleIds)
-            .order('id', { ascending: true })
-            .range(rStart, rStart + rLimit - 1);
-            
-          if (respsChunk && respsChunk.length > 0) {
-            allResps = [...allResps, ...respsChunk];
-            if (respsChunk.length < rLimit) break;
-            rStart += rLimit;
-          } else {
-            break;
-          }
-        }
-        setResponses(allResps);
-
-        // Fetch Answers for those responses in parallel chunks (up to 80 responses per chunk = ~800 answers, under 1000 row limit)
-        if (allResps && allResps.length > 0) {
-          const respIds = allResps.map((r: any) => r.id);
-          const CHUNK_SIZE = 80;
-          const chunks = [];
-          for (let i = 0; i < respIds.length; i += CHUNK_SIZE) {
-            chunks.push(respIds.slice(i, i + CHUNK_SIZE));
-          }
-          
-          const ansResults = await Promise.all(
-            chunks.map(chunk => 
-              supabase
-                .from('feedback_answers')
-                .select('*')
-                .in('response_id', chunk)
-            )
-          );
-          
-          const allAnswers = ansResults.flatMap(r => r.data || []);
-          setAnswers(allAnswers);
-        } else {
-          setAnswers([]);
-        }
-      }
-    } catch (err) {
-      console.error('Initialization error:', err);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [activeTab, responses]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -596,8 +719,23 @@ export default function FacultyDashboard() {
         {/* Content Area */}
         <main className="flex-1 overflow-y-auto p-8 bg-[#f8fafc]">
           
+          {dashboardError && (
+            <div className="max-w-6xl mx-auto mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between text-red-700 text-sm font-medium shadow-sm">
+              <div className="flex items-center space-x-3">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-500" />
+                <span>{dashboardError}</span>
+              </div>
+              <button
+                onClick={() => { setLoading(true); initDashboard(); }}
+                className="ml-4 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 font-bold rounded-lg transition-colors flex items-center text-xs"
+              >
+                <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+              </button>
+            </div>
+          )}
+
           {/* TAB 1: RESULTS */}
-          {activeTab === 'results' && resultData && (
+          {activeTab === 'results' && (
             <div className="animate-fade-in max-w-6xl mx-auto">
               
               <div className="flex justify-between items-center mb-6">
@@ -608,6 +746,18 @@ export default function FacultyDashboard() {
                   </button>
                 </div>
               </div>
+
+              {loadingAnswers ? (
+                <div className="bg-white rounded-[24px] p-12 text-center border border-gray-100 shadow-sm">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#1E3A8A] mb-3"></div>
+                  <p className="text-gray-600 font-medium text-sm">Loading detailed question analytics & responses...</p>
+                </div>
+              ) : !resultData ? (
+                <div className="bg-white rounded-[24px] p-12 text-center border border-gray-100 shadow-sm text-gray-500">
+                  No feedback data available for this cycle.
+                </div>
+              ) : (
+                <>
 
               {/* Summary Cards */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
@@ -727,6 +877,8 @@ export default function FacultyDashboard() {
                   </div>
                 ))}
               </div>
+              </>
+              )}
             </div>
           )}
 
