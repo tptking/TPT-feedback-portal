@@ -22,6 +22,7 @@ export default function FeedbackForm() {
   const navigate = useNavigate();
 
   const [student, setStudent] = useState<any>(null);
+  const [departmentName, setDepartmentName] = useState<string>('');
   const [activeCycle, setActiveCycle] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
 
@@ -34,6 +35,7 @@ export default function FeedbackForm() {
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [savingSuccessText, setSavingSuccessText] = useState<string>('');
   const [draftRestoredText, setDraftRestoredText] = useState<string>('');
   const [error, setError] = useState('');
@@ -57,6 +59,14 @@ export default function FeedbackForm() {
       setStudent(parsedStudent);
 
       try {
+        // Fetch Department Name
+        const { data: dept } = await supabase
+          .from('departments')
+          .select('department_name')
+          .eq('id', parsedStudent.department_id)
+          .single();
+        if (dept) setDepartmentName(dept.department_name);
+
         // 1. Fetch active cycle for student's department and year
         const { data: cycles, error: cycleErr } = await supabase
           .from('feedback_cycles')
@@ -126,10 +136,11 @@ export default function FeedbackForm() {
         const uniqueSubjectIds = Array.from(subjectsMap.keys());
         const totalSubjectsCount = uniqueSubjectIds.length;
 
-        // If all assignments already have submissions in database, redirect to completed screen
+        // If all assignments already have submissions in database, show completed screen directly
         const totalRequiredAssignments = assignments?.length || 0;
         if (totalRequiredAssignments > 0 && submittedSet.size >= totalRequiredAssignments) {
-          navigate('/student/dashboard', { replace: true });
+          setSubmitted(true);
+          setLoading(false);
           return;
         }
 
@@ -221,7 +232,7 @@ export default function FeedbackForm() {
       localStorage.setItem(draftKey, JSON.stringify({
         studentId: student.id,
         cycleId: activeCycle.id,
-        updatedAt: Date.now(),
+        updatedAt: new Date().toISOString(),
         answers: updatedAll
       }));
     } catch (e) {
@@ -300,151 +311,168 @@ export default function FeedbackForm() {
     setSavingSuccessText('');
 
     try {
-      // Build full evaluations payload
-      const evaluationsPayload = evaluations.map(ev => {
-        const evAnswers = allRatings[ev.key] || {};
-        return {
-          subject_id: ev.subjectId,
-          faculty_id: ev.facultyId,
-          answers: questions.map(q => {
-            const ratingVal = evAnswers[q.id];
-            const optionLabel = ratings.find(r => r.value === ratingVal)?.label || '';
-            return {
-              question_id: q.id,
-              rating_value: ratingVal,
-              selected_option: optionLabel
-            };
-          })
-        };
+      // Prepare response records for all evaluations
+      const responseRecords = evaluations.map(ev => ({
+        student_id: student.id,
+        faculty_id: ev.facultyId,
+        subject_id: ev.subjectId,
+        department_id: student.department_id,
+        feedback_cycle_id: activeCycle.id,
+        status: 'COMPLETED'
+      }));
+
+      // Checkpoint 1: Insert into feedback_responses
+      const { data: insertedResponses, error: responseError } = await supabase
+        .from('feedback_responses')
+        .insert(responseRecords)
+        .select('id, faculty_id, subject_id');
+
+      if (responseError) {
+        if (responseError.code === '23505') {
+          console.warn('Feedback responses already recorded in database:', responseError);
+          try {
+            localStorage.removeItem(`tpt_feedback_draft_${student.id}_${activeCycle.id}`);
+          } catch (e) {
+            console.warn('Could not clear draft from localStorage', e);
+          }
+          setSubmitted(true);
+          setSubmitting(false);
+          return;
+        }
+
+        console.error('Supabase insert failed:', responseError);
+        alert('Feedback could not be saved. Please try again.');
+        setError(responseError.message || 'Feedback could not be saved. Please try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      if (!insertedResponses || insertedResponses.length === 0) {
+        console.error('Supabase insert failed: No response records returned');
+        alert('Feedback could not be saved. Please try again.');
+        setError('Feedback could not be saved. Please try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Map response IDs to evaluation keys `${subject_id}-${faculty_id}`
+      const respMap = new Map<string, string>();
+      insertedResponses.forEach((ir: any) => {
+        respMap.set(`${ir.subject_id}-${ir.faculty_id}`, ir.id);
       });
 
-      let submissionSucceeded = false;
+      // Prepare answer records for all questions across all evaluations
+      const allAnswerRecords: any[] = [];
+      for (const ev of evaluations) {
+        const respId = respMap.get(ev.key);
+        if (!respId) {
+          console.error(`Missing response ID for ${ev.subjectName}`);
+          continue;
+        }
+        const evAnswers = allRatings[ev.key] || {};
+        for (const q of questions) {
+          const ratingVal = evAnswers[q.id];
+          const optionLabel = ratings.find(r => r.value === ratingVal)?.label || '';
+          allAnswerRecords.push({
+            response_id: respId,
+            question_id: q.id,
+            rating_value: ratingVal,
+            selected_option: optionLabel
+          });
+        }
+      }
 
-      // 1. Attempt single atomic PostgreSQL RPC if deployed
+      // Checkpoint 2: Insert into feedback_answers
+      const { data: insertedAnswers, error: answersError } = await supabase
+        .from('feedback_answers')
+        .insert(allAnswerRecords)
+        .select('id');
+
+      if (answersError || !insertedAnswers) {
+        console.error('Supabase insert failed:', answersError);
+        alert('Feedback could not be saved. Please try again.');
+        setError(answersError?.message || 'Feedback answers could not be saved. Please try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Clear draft locally on confirmed success
       try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('submit_feedback_session', {
-          p_student_id: student.id,
-          p_feedback_cycle_id: activeCycle.id,
-          p_department_id: student.department_id,
-          p_evaluations: evaluationsPayload
-        });
-
-        if (!rpcErr && rpcData?.success) {
-          submissionSucceeded = true;
-        } else if (rpcErr && rpcErr.code !== 'PGRST202' && !rpcErr.message?.includes('not found')) {
-          throw new Error(rpcErr.message || rpcData?.error || 'Database submission failed');
-        }
-      } catch (rpcCallError: any) {
-        // If RPC function not found in schema cache, fallback to batch insert
-        if (!rpcCallError.message?.includes('not found') && rpcCallError.code !== 'PGRST202') {
-          throw rpcCallError;
-        }
+        const draftKey = `tpt_feedback_draft_${student.id}_${activeCycle.id}`;
+        localStorage.removeItem(draftKey);
+      } catch (e) {
+        console.warn('Could not clear draft from localStorage', e);
       }
 
-      // 2. Fallback: Save entire session in the fewest safe requests with verified rollback
-      if (!submissionSucceeded) {
-        // Pre-flight duplicate check
-        const { data: existingResps, error: checkErr } = await supabase
-          .from('feedback_responses')
-          .select('id')
-          .eq('student_id', student.id)
-          .eq('feedback_cycle_id', activeCycle.id)
-          .limit(1);
-
-        if (checkErr) throw new Error(`Verification error: ${checkErr.message}`);
-        if (existingResps && existingResps.length > 0) {
-          throw new Error('Feedback has already been recorded for this feedback cycle.');
-        }
-
-        // Batch insert ALL response records in ONE HTTP request
-        const responseRecords = evaluations.map(ev => ({
-          student_id: student.id,
-          faculty_id: ev.facultyId,
-          subject_id: ev.subjectId,
-          department_id: student.department_id,
-          feedback_cycle_id: activeCycle.id,
-          status: 'COMPLETED'
-        }));
-
-        const { data: insertedResponses, error: insertRespErr } = await supabase
-          .from('feedback_responses')
-          .insert(responseRecords)
-          .select('id, faculty_id, subject_id');
-
-        if (insertRespErr || !insertedResponses || insertedResponses.length === 0) {
-          throw new Error(insertRespErr?.message || 'Failed to create response records in database.');
-        }
-
-        // Map response IDs to evaluation keys
-        const respMap = new Map<string, string>();
-        insertedResponses.forEach((ir: any) => {
-          respMap.set(`${ir.subject_id}-${ir.faculty_id}`, ir.id);
-        });
-
-        // Batch insert ALL answer records in ONE HTTP request
-        const allAnswerRecords: any[] = [];
-        for (const ev of evaluations) {
-          const respId = respMap.get(ev.key);
-          if (!respId) {
-            throw new Error(`Internal error: Missing response ID for ${ev.subjectName}`);
-          }
-          const evAnswers = allRatings[ev.key] || {};
-          for (const q of questions) {
-            const ratingVal = evAnswers[q.id];
-            const optionLabel = ratings.find(r => r.value === ratingVal)?.label || '';
-            allAnswerRecords.push({
-              response_id: respId,
-              question_id: q.id,
-              rating_value: ratingVal,
-              selected_option: optionLabel
-            });
-          }
-        }
-
-        const { error: insertAnsErr } = await supabase
-          .from('feedback_answers')
-          .insert(allAnswerRecords);
-
-        if (insertAnsErr) {
-          // Rollback inserted response records
-          const createdIds = insertedResponses.map((r: any) => r.id);
-          const { error: rollbackErr } = await supabase
-            .from('feedback_responses')
-            .delete()
-            .in('id', createdIds);
-
-          if (rollbackErr) {
-            throw new Error(`Failed to save answers (${insertAnsErr.message}). Rollback failed: ${rollbackErr.message}. Please contact administrator.`);
-          }
-          throw new Error(`Failed to save answers: ${insertAnsErr.message}. Session rolled back safely.`);
-        }
-
-        submissionSucceeded = true;
-      }
-
-      if (submissionSucceeded) {
-        // Clear saved draft on confirmed completion
-        try {
-          const draftKey = `tpt_feedback_draft_${student.id}_${activeCycle.id}`;
-          localStorage.removeItem(draftKey);
-        } catch (e) {
-          console.warn('Could not clear draft from localStorage', e);
-        }
-
-        setSavingSuccessText('All course feedback submitted successfully! Redirecting...');
-        setTimeout(() => {
-          navigate('/student/dashboard', { replace: true });
-        }, 1200);
-      }
+      // Show Completed only after confirmed database success
+      setSubmitted(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (err: any) {
-      console.error('Final submission error:', err);
-      setError(err.message || 'Failed to submit feedback. All your answers are saved locally; please retry.');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      console.error('Supabase insert failed:', err);
+      alert('Feedback could not be saved. Please try again.');
+      setError(err.message || 'Failed to submit feedback. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (submitted) {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] font-sans flex flex-col">
+        {/* Navbar */}
+        <nav className="bg-[#1E3A8A] text-white shadow-md">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-20">
+              <div className="flex items-center space-x-4">
+                <div className="w-12 h-12 bg-white rounded-full p-1 shadow-sm">
+                  <img src="https://www.tpt.edu.in/assets/images/logo.jpg" alt="Logo" className="w-full h-full object-contain rounded-full" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <h1 className="font-bold text-lg sm:text-xl tracking-wide truncate">TPT Feedback</h1>
+                  <p className="text-blue-200 text-xs sm:text-sm font-medium truncate max-w-[150px] sm:max-w-none">
+                    {departmentName || 'Student Feedback Portal'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  sessionStorage.removeItem('student_data');
+                  navigate('/');
+                }}
+                className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="font-medium text-sm">Logout</span>
+              </button>
+            </div>
+          </div>
+        </nav>
+
+        {/* Completion Screen */}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="bg-white p-10 rounded-[24px] shadow-lg border border-gray-100 max-w-lg w-full text-center animate-fade-in">
+            <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <CheckCircle2 className="w-12 h-12 text-emerald-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">All Feedback Completed!</h2>
+            <p className="text-gray-500 text-lg leading-relaxed mb-8">
+              You have successfully completed all your subject feedbacks for this semester. Thank you for your valuable responses!
+            </p>
+            <button
+              onClick={() => {
+                sessionStorage.removeItem('student_data');
+                navigate('/');
+              }}
+              className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors shadow-md"
+            >
+              Logout Safely
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading || !currentEval) {
     return (
