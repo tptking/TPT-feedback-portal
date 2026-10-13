@@ -55,7 +55,7 @@ export default function FacultyLogin() {
       } else {
         navigate('/faculty/dashboard');
       }
-    } catch (err) {
+    } catch {
       setError('Invalid Username or Password');
     } finally {
       setLoading(false);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { LogOut, BookOpen, CheckCircle } from 'lucide-react';
@@ -13,25 +13,22 @@ interface Assignment {
 
 export default function StudentDashboard() {
   const navigate = useNavigate();
-  const [student, setStudent] = useState<any>(null);
+  const [student] = useState<any>(() => {
+    const studentData = sessionStorage.getItem('student_data');
+    if (!studentData) return null;
+    try {
+      return JSON.parse(studentData);
+    } catch {
+      return null;
+    }
+  });
+
   const [departmentName, setDepartmentName] = useState('');
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [activeCycle, setActiveCycle] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const studentData = sessionStorage.getItem('student_data');
-    if (!studentData) {
-      navigate('/');
-      return;
-    }
-    
-    const parsedStudent = JSON.parse(studentData);
-    setStudent(parsedStudent);
-    fetchDashboardData(parsedStudent);
-  }, [navigate]);
-
-  const fetchDashboardData = async (studentInfo: any) => {
+  const fetchDashboardData = useCallback(async (studentInfo: any) => {
     try {
       // 1. Fetch Department Name
       const { data: dept } = await supabase
@@ -59,42 +56,92 @@ export default function StudentDashboard() {
         .select(`
           faculty_id,
           subject_id,
+          section,
           faculty:faculty_id (faculty_name),
           subjects:subject_id (subject_name, course_code)
         `)
         .eq('department_id', studentInfo.department_id)
         .eq('year', studentInfo.year)
         .eq('semester', studentInfo.semester)
-        .eq('section', studentInfo.section)
         .eq('active', true);
 
       if (fsaError) throw fsaError;
 
-      if (fsaData && cycle) {
+      const matchesSection = (asgSec?: string | null, stuSec?: string | null): boolean => {
+        const cleanAsg = asgSec ? asgSec.trim().toUpperCase() : '';
+        const cleanStu = stuSec ? stuSec.trim().toUpperCase() : '';
+        if (cleanAsg) {
+          return cleanStu === cleanAsg;
+        }
+        return true;
+      };
+
+      const validAssignments = (fsaData || []).filter((a: any) =>
+        matchesSection(a.section, studentInfo.section)
+      );
+
+      if (validAssignments.length > 0 && cycle) {
         // 4. Check which assignments the student has already submitted
-        const { data: userResponses } = await supabase
+        const { data: userResponses, error: responsesError } = await supabase
           .from('feedback_responses')
-          .select('subject_id, faculty_id')
+          .select('id, subject_id, faculty_id')
           .eq('student_id', studentInfo.id)
           .eq('feedback_cycle_id', cycle.id);
           
-        const submittedSet = new Set(userResponses?.map((r: any) => `${r.subject_id}-${r.faculty_id}`) || []);
+        if (responsesError) {
+          console.error("Could not load feedback status:", responsesError);
+          // Show an unknown/error state rather than falsely showing Completed.
+          setAssignments([]);
+          return;
+        }
+
+        const submittedSet = new Set<string>();
+        if (userResponses && userResponses.length > 0) {
+          const respIds = userResponses.map((r: any) => r.id);
+          const { data: answersData, error: ansError } = await supabase
+            .from('feedback_answers')
+            .select('response_id')
+            .in('response_id', respIds);
+
+          if (!ansError && answersData) {
+            const ansCounts = new Map<string, number>();
+            answersData.forEach((a: any) => {
+              ansCounts.set(a.response_id, (ansCounts.get(a.response_id) || 0) + 1);
+            });
+            userResponses.forEach((r: any) => {
+              if ((ansCounts.get(r.id) || 0) >= 10) {
+                submittedSet.add(`${r.subject_id}-${r.faculty_id}`);
+              }
+            });
+          }
+        }
+
+        // Validate completion using all required assignments and their persisted responses
+        const isFeedbackSaved = validAssignments.length > 0 && validAssignments.every((a: any) =>
+          submittedSet.has(`${a.subject_id}-${a.faculty_id}`)
+        );
+
+        const status = isFeedbackSaved
+          ? "Completed"
+          : "Pending";
 
         const subjectsMap = new Map();
-        fsaData.forEach((assignment: any) => {
+        validAssignments.forEach((assignment: any) => {
           const isSub = submittedSet.has(`${assignment.subject_id}-${assignment.faculty_id}`);
+          const fObj = Array.isArray(assignment.faculty) ? assignment.faculty[0] : assignment.faculty;
+          const sObj = Array.isArray(assignment.subjects) ? assignment.subjects[0] : assignment.subjects;
           
           if (!subjectsMap.has(assignment.subject_id)) {
             subjectsMap.set(assignment.subject_id, {
               subject_id: assignment.subject_id,
-              subject_name: assignment.subjects.subject_name,
-              course_code: assignment.subjects.course_code,
+              subject_name: sObj?.subject_name || 'Subject',
+              course_code: sObj?.course_code || '',
               faculties: []
             });
           }
           subjectsMap.get(assignment.subject_id).faculties.push({
             faculty_id: assignment.faculty_id,
-            faculty_name: assignment.faculty.faculty_name,
+            faculty_name: fObj?.faculty_name || 'Assigned Faculty',
             isSubmitted: isSub
           });
         });
@@ -107,11 +154,13 @@ export default function StudentDashboard() {
           };
         });
 
-        // Find first uncompleted subject and route immediately
-        const firstUncompleted = groupedAssignments.find((a: any) => !a.isSubmitted);
-        if (firstUncompleted) {
-          navigate(`/student/feedback/${firstUncompleted.subject_id}`, { replace: true });
-          return; // Stop rendering this component
+        if (status === "Pending") {
+          // Find first uncompleted subject and route immediately
+          const firstUncompleted = groupedAssignments.find((a: any) => !a.isSubmitted);
+          if (firstUncompleted) {
+            navigate(`/student/feedback/${firstUncompleted.subject_id}`, { replace: true });
+            return; // Stop rendering this component
+          }
         }
 
         setAssignments(groupedAssignments);
@@ -123,7 +172,18 @@ export default function StudentDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!student) {
+      navigate('/');
+      return;
+    }
+    const timer = setTimeout(() => {
+      fetchDashboardData(student);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [student, navigate, fetchDashboardData]);
 
   const handleLogout = () => {
     sessionStorage.removeItem('student_data');
@@ -188,13 +248,22 @@ export default function StudentDashboard() {
               <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
                 <CheckCircle className="w-12 h-12 text-emerald-500" />
               </div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-3">All Feedback Completed!</h2>
-              <p className="text-gray-500 text-lg leading-relaxed mb-8">
+              <div className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 mb-4 shadow-sm">
+                Status: Completed
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback form has been completed successfully!</h2>
+              <p className="text-sm font-semibold text-gray-700 mb-1">
+                {student?.student_name || student?.name}
+              </p>
+              <p className="text-xs font-medium text-gray-500 mb-6 font-mono">
+                Register No: {student?.register_number}
+              </p>
+              <p className="text-gray-500 text-sm leading-relaxed mb-8">
                 You have successfully completed all your subject feedbacks for this semester. Thank you for your valuable responses!
               </p>
               <button
                 onClick={handleLogout}
-                className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors"
+                className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors shadow-md cursor-pointer"
               >
                 Logout Safely
               </button>

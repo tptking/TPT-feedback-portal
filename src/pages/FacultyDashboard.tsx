@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle } from 'lucide-react';
@@ -50,7 +50,7 @@ export default function FacultyDashboard() {
   }, [responses]);
 
   // Helper to fetch all responses for the cycles (paginated, lightweight)
-  const fetchResponsesData = async (deptId: string, cyclesList: any[]) => {
+  const fetchResponsesData = useCallback(async (deptId: string, cyclesList: any[]) => {
     const cycleIds = cyclesList.map((c: any) => c.id);
     if (cycleIds.length === 0) return [];
 
@@ -81,10 +81,10 @@ export default function FacultyDashboard() {
       }
     }
     return allResps;
-  };
+  }, []);
 
   // Helper to fetch detailed answers in chunks of 80 response IDs
-  const fetchAnswersForResponses = async (respList: any[]) => {
+  const fetchAnswersForResponses = useCallback(async (respList: any[]) => {
     if (!respList || respList.length === 0) return [];
 
     const respIds = respList.map((r: any) => r.id);
@@ -109,11 +109,10 @@ export default function FacultyDashboard() {
     );
 
     return ansResults.flat();
-  };
+  }, []);
 
   // Full initialization (Runs on mount or manual "Refresh Data")
-  const initDashboard = async (forceRefreshAnswers = true) => {
-    setDashboardError(null);
+  const initDashboard = useCallback(async (forceRefreshAnswers = true) => {
     try {
       // 1. Authenticate Faculty
       const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -121,6 +120,7 @@ export default function FacultyDashboard() {
         navigate('/');
         return;
       }
+      setDashboardError(null);
 
       const { data: fac, error: facError } = await supabase
         .from('faculty')
@@ -188,7 +188,8 @@ export default function FacultyDashboard() {
             faculty:faculty_id (faculty_name),
             subjects:subject_id (subject_name, course_code)
           `)
-          .eq('department_id', fac.department_id);
+          .eq('department_id', fac.department_id)
+          .eq('active', true);
         if (asgsError) {
           throw new Error(`Failed to load course assignments: ${asgsError.message}`);
         }
@@ -223,11 +224,11 @@ export default function FacultyDashboard() {
       setLoading(false);
       setLoadingAnswers(false);
     }
-  };
+  }, [navigate, fetchResponsesData, fetchAnswersForResponses]);
 
   // Background poll: ONLY fetch responses (zero feedback_answers queries)
   // Uses refs to ensure no stale closure over faculty or allCycles
-  const pollResponsesBackground = async () => {
+  const pollResponsesBackground = useCallback(async () => {
     const currentFaculty = facultyRef.current;
     const currentCycles = allCyclesRef.current;
     if (!currentFaculty || !currentCycles || currentCycles.length === 0) return;
@@ -239,10 +240,12 @@ export default function FacultyDashboard() {
       console.error('Background responses poll error:', err);
       // Log silently during background polling to avoid interrupting active UI
     }
-  };
+  }, [fetchResponsesData]);
 
   useEffect(() => {
-    initDashboard(true);
+    const initTimer = setTimeout(() => {
+      initDashboard(true);
+    }, 0);
     // Background polling: 30 seconds interval, ONLY queries feedback_responses
     const interval = setInterval(() => {
       pollResponsesBackground();
@@ -252,10 +255,11 @@ export default function FacultyDashboard() {
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => {
+      clearTimeout(initTimer);
       window.removeEventListener('resize', checkMobile);
       clearInterval(interval);
     };
-  }, []);
+  }, [initDashboard, pollResponsesBackground]);
 
   // When user switches to 'results' tab or when new responses arrive while on 'results' tab, ensure answers are loaded/synchronized
   useEffect(() => {
@@ -265,21 +269,34 @@ export default function FacultyDashboard() {
       const hasMissingAnswers = responses.some((r: any) => !existingRespIds.has(r.id));
 
       if (answers.length === 0 || hasMissingAnswers) {
-        setLoadingAnswers(true);
-        setDashboardError(null);
-        fetchAnswersForResponses(responses)
-          .then(allAnswers => {
-            setAnswers(allAnswers);
-            setLoadingAnswers(false);
-          })
-          .catch(err => {
-            console.error('Failed to load answers for Results tab:', err);
-            setDashboardError(err.message || 'Failed to load detailed answers for results.');
-            setLoadingAnswers(false);
-          });
+        let isCancelled = false;
+        const timer = setTimeout(async () => {
+          setLoadingAnswers(true);
+          setDashboardError(null);
+          try {
+            const allAnswers = await fetchAnswersForResponses(responses);
+            if (!isCancelled) {
+              setAnswers(allAnswers);
+            }
+          } catch (err: any) {
+            if (!isCancelled) {
+              console.error('Failed to load answers for Results tab:', err);
+              setDashboardError(err.message || 'Failed to load detailed answers for results.');
+            }
+          } finally {
+            if (!isCancelled) {
+              setLoadingAnswers(false);
+            }
+          }
+        }, 0);
+
+        return () => {
+          isCancelled = true;
+          clearTimeout(timer);
+        };
       }
     }
-  }, [activeTab, responses]);
+  }, [activeTab, responses, answers, loadingAnswers, fetchAnswersForResponses]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -342,10 +359,23 @@ export default function FacultyDashboard() {
     }
   };
 
+  const getFacultyName = (facObj: any): string => {
+    if (!facObj) return 'Assigned Faculty';
+    if (Array.isArray(facObj)) return facObj[0]?.faculty_name || 'Assigned Faculty';
+    return facObj.faculty_name || 'Assigned Faculty';
+  };
+
+  const getSubjectName = (subjObj: any): string => {
+    if (!subjObj) return 'Subject';
+    if (Array.isArray(subjObj)) return subjObj[0]?.subject_name || 'Subject';
+    return subjObj.subject_name || 'Subject';
+  };
+
   const exportFacultyToExcel = (fac: any, subjectName: string) => {
+    const facultyName = getFacultyName(fac.faculty);
     const data: any[] = [
       { A: 'Subject:', B: subjectName },
-      { A: 'Faculty:', B: fac.faculty?.faculty_name },
+      { A: 'Faculty:', B: facultyName },
       {},
       { 
         A: 'Qns. No', B: 'Questions', C: 'Excellent (5)', D: 'Very Good (4)', 
@@ -401,7 +431,7 @@ export default function FacultyDashboard() {
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Feedback");
-    XLSX.writeFile(wb, `Feedback_${fac.faculty?.faculty_name?.replace(/\\s+/g, '_') || 'Faculty'}.xlsx`);
+    XLSX.writeFile(wb, `Feedback_${facultyName.replace(/\s+/g, '_')}.xlsx`);
   };
 
   // ----- CALCULATIONS -----
@@ -439,11 +469,12 @@ export default function FacultyDashboard() {
       const facultiesStats = subjGrp.faculties.map((a: any) => {
         const courseResponses = filteredResponses.filter(r => r.subject_id === a.subject_id && r.faculty_id === a.faculty_id);
         const courseResCount = courseResponses.length;
+        const courseRespIdSet = new Set(courseResponses.map(r => r.id));
         
         const qStats = questions.map(q => {
           const qAnswers = answers.filter(ans => 
             ans.question_id === q.id && 
-            courseResponses.some(r => r.id === ans.response_id)
+            courseRespIdSet.has(ans.response_id)
           );
 
           let count5 = 0, count4 = 0, count3 = 0, count2 = 0, count1 = 0;
@@ -485,13 +516,31 @@ export default function FacultyDashboard() {
 
     const overallPercentage = totalMaxMarks > 0 ? ((totalObtainedMarks / totalMaxMarks) * 100).toFixed(2) : "0.00";
     
+    const matchesSection = (asgSec?: string | null, stuSec?: string | null): boolean => {
+      const cleanAsg = asgSec ? asgSec.trim().toUpperCase() : '';
+      const cleanStu = stuSec ? stuSec.trim().toUpperCase() : '';
+      if (cleanAsg) {
+        return cleanStu === cleanAsg;
+      }
+      return true;
+    };
+
     let fullyCompletedCount = 0;
     filteredStudents.forEach(s => {
-      const studentAssignments = filteredAssignments.filter(a => a.semester === s.semester && a.section === s.section);
+      const studentAssignments = filteredAssignments.filter(
+        a => a.active === true && a.semester === s.semester && matchesSection(a.section, s.section)
+      );
       const requiredCount = studentAssignments.length;
       const sResponses = filteredResponses.filter(r => r.student_id === s.id);
       const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
-      if (requiredCount > 0 && completedSet.size >= requiredCount) {
+      const completedCount = completedSet.size;
+
+      const completionPercentage =
+        requiredCount > 0
+          ? Math.round((completedCount / requiredCount) * 100)
+          : 0;
+
+      if (requiredCount > 0 && completionPercentage === 100) {
         fullyCompletedCount++;
       }
     });
@@ -510,12 +559,28 @@ export default function FacultyDashboard() {
     const completed: any[] = [];
     const pending: any[] = [];
 
+    const matchesSection = (asgSec?: string | null, stuSec?: string | null): boolean => {
+      const cleanAsg = asgSec ? asgSec.trim().toUpperCase() : '';
+      const cleanStu = stuSec ? stuSec.trim().toUpperCase() : '';
+      if (cleanAsg) {
+        return cleanStu === cleanAsg;
+      }
+      return true;
+    };
+
     filteredStudents.forEach(s => {
-      const studentAssignments = filteredAssignments.filter(a => a.semester === s.semester && a.section === s.section);
+      const studentAssignments = filteredAssignments.filter(
+        a => a.active === true && a.semester === s.semester && matchesSection(a.section, s.section)
+      );
       const requiredCount = studentAssignments.length;
       const sResponses = filteredResponses.filter(r => r.student_id === s.id);
       const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
       const completedCount = completedSet.size;
+
+      const completionPercentage =
+        requiredCount > 0
+          ? Math.round((completedCount / requiredCount) * 100)
+          : 0;
 
       if (requiredCount > 0 && completedCount >= requiredCount) {
         const latest = sResponses.reduce((a, b) => new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, sResponses[0]);
@@ -523,6 +588,7 @@ export default function FacultyDashboard() {
           Register_Number: s.register_number,
           Student_Name: s.student_name,
           Status: 'Completed',
+          Completion_Percentage: `${completionPercentage}%`,
           Submitted: latest ? new Date(latest.submitted_at).toLocaleString() : 'N/A'
         });
       } else {
@@ -530,6 +596,7 @@ export default function FacultyDashboard() {
           Register_Number: s.register_number,
           Student_Name: s.student_name,
           Status: requiredCount === 0 ? 'No Subjects' : `Pending (${completedCount}/${requiredCount})`,
+          Completion_Percentage: `${completionPercentage}%`,
           Submitted: '-'
         });
       }
@@ -793,25 +860,28 @@ export default function FacultyDashboard() {
                 {resultData.groupedCourseStats.map((courseGrp, idx) => (
                   <div key={idx} className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden mb-8">
                     <div className="bg-gray-50 p-6 border-b border-gray-100">
-                      <h3 className="text-xl font-bold text-gray-900 mb-1">{courseGrp.subject?.subject_name}</h3>
-                      <p className="text-sm font-medium text-gray-500">Code: {courseGrp.subject?.course_code}</p>
+                      <h3 className="text-xl font-bold text-gray-900 mb-1">{getSubjectName(courseGrp.subject)}</h3>
+                      <p className="text-sm font-medium text-gray-500">Code: {courseGrp.subject?.course_code || ''}</p>
                     </div>
                     
-                    {courseGrp.faculties.map((fac: any, fIdx: number) => (
+                    {courseGrp.faculties.map((fac: any, fIdx: number) => {
+                      const facultyDisplayName = getFacultyName(fac.faculty);
+                      const exportTableId = `export-table-${fac.faculty_id || fIdx}-${courseGrp.subject?.id || fIdx}`;
+                      return (
                       <div key={fIdx} className="border-b border-gray-100 last:border-0">
                         <div className="bg-white p-4 border-b border-gray-100 flex justify-between items-center">
                           <div className="flex items-center space-x-4">
-                            <p className="text-sm font-medium text-gray-600">Faculty: <span className="text-gray-900 font-bold text-base">{fac.faculty?.faculty_name}</span></p>
+                            <p className="text-sm font-medium text-gray-600">Faculty: <span className="text-gray-900 font-bold text-base">{facultyDisplayName}</span></p>
                             <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-full border border-blue-200 shadow-sm">
                               {fac.totalResponses} Responses
                             </span>
                           </div>
                           
                           <div className="flex items-center space-x-3">
-                            <button onClick={() => exportToWord(`export-table-${fac.faculty?.id}-${courseGrp.subject?.id}`, `Feedback_${fac.faculty?.faculty_name}`)} className="flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors border border-blue-100">
+                            <button onClick={() => exportToWord(exportTableId, `Feedback_${facultyDisplayName}`)} className="flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors border border-blue-100">
                               <FileText className="w-3.5 h-3.5 mr-1.5" /> Word
                             </button>
-                            <button onClick={() => exportFacultyToExcel(fac, courseGrp.subject?.subject_name)} className="flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-100">
+                            <button onClick={() => exportFacultyToExcel(fac, getSubjectName(courseGrp.subject))} className="flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-100">
                               <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" /> Excel
                             </button>
                             <div className="bg-[#1E3A8A] text-white px-4 py-1.5 rounded-lg font-bold text-sm shadow-sm ml-2">
@@ -821,10 +891,10 @@ export default function FacultyDashboard() {
                             </div>
                           </div>
                         </div>
-                        <div className="overflow-x-auto p-4" id={`export-table-${fac.faculty?.id}-${courseGrp.subject?.id}`}>
+                        <div className="overflow-x-auto p-4" id={exportTableId}>
                           <div style={{ display: 'none' }} className="print-header mb-4">
-                            <h2>{courseGrp.subject?.subject_name} ({courseGrp.subject?.course_code})</h2>
-                            <h3>Faculty: {fac.faculty?.faculty_name}</h3>
+                            <h2>{getSubjectName(courseGrp.subject)} ({courseGrp.subject?.course_code || ''})</h2>
+                            <h3>Faculty: {facultyDisplayName}</h3>
                           </div>
                           <table className="w-full text-sm text-center border-collapse border border-gray-200">
                             <thead className="bg-gray-100 text-gray-700 font-bold text-xs">
@@ -873,7 +943,8 @@ export default function FacultyDashboard() {
                           </div>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })}
                   </div>
                 ))}
               </div>
@@ -1028,12 +1099,12 @@ export default function FacultyDashboard() {
                           if (!acc.has(a.subject_id)) {
                             acc.set(a.subject_id, {
                               subject_id: a.subject_id,
-                              subject_name: a.subjects?.subject_name,
-                              course_code: a.subjects?.course_code,
+                              subject_name: getSubjectName(a.subjects),
+                              course_code: (Array.isArray(a.subjects) ? a.subjects[0]?.course_code : a.subjects?.course_code) || '',
                               faculties: []
                             });
                           }
-                          acc.get(a.subject_id).faculties.push(a.faculty?.faculty_name);
+                          acc.get(a.subject_id).faculties.push(getFacultyName(a.faculty));
                           return acc;
                         }, new Map()).values()
                       ).map((c: any, i) => (

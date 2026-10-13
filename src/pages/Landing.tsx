@@ -37,7 +37,7 @@ export default function Landing() {
         sessionStorage.setItem('student_data', JSON.stringify(data));
         navigate('/student/dashboard');
       }
-    } catch (err) {
+    } catch {
       setError('Invalid Register Number (or Database not connected)');
     } finally {
       setLoading(false);
@@ -81,7 +81,7 @@ export default function Landing() {
       } else {
         navigate('/faculty/dashboard');
       }
-    } catch (err) {
+    } catch {
       setError('Invalid Username/Password (or Database not connected)');
     } finally {
       setLoading(false);

@@ -36,7 +36,7 @@ export default function StudentLogin() {
         sessionStorage.setItem('student_data', JSON.stringify(data));
         navigate('/student/dashboard');
       }
-    } catch (err) {
+    } catch {
       setError('Invalid Register Number');
     } finally {
       setLoading(false);
