@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle } from 'lucide-react';
+import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Building2, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function FacultyDashboard() {
@@ -11,6 +11,11 @@ export default function FacultyDashboard() {
   
   const [faculty, setFaculty] = useState<any>(null);
   const [department, setDepartment] = useState<any>(null);
+  const [departmentsList, setDepartmentsList] = useState<any[]>([]);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
+  const [deptCompletionStats, setDeptCompletionStats] = useState<Record<string, { totalStudents: number; completedCount: number; pendingCount: number }>>({});
+  const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
+
   const [allCycles, setAllCycles] = useState<any[]>([]);
   const [isMobile, setIsMobile] = useState(false);
   
@@ -32,6 +37,9 @@ export default function FacultyDashboard() {
   const allCyclesRef = useRef<any[]>([]);
   const activeTabRef = useRef<'results' | 'status' | 'control'>('results');
   const responsesRef = useRef<any[]>([]);
+  const selectedDepartmentIdRef = useRef<string>('');
+  const departmentsListRef = useRef<any[]>([]);
+  const selectedYearRef = useRef<number>(3);
 
   useEffect(() => {
     facultyRef.current = faculty;
@@ -48,6 +56,18 @@ export default function FacultyDashboard() {
   useEffect(() => {
     responsesRef.current = responses;
   }, [responses]);
+
+  useEffect(() => {
+    selectedDepartmentIdRef.current = selectedDepartmentId;
+  }, [selectedDepartmentId]);
+
+  useEffect(() => {
+    departmentsListRef.current = departmentsList;
+  }, [departmentsList]);
+
+  useEffect(() => {
+    selectedYearRef.current = selectedYear;
+  }, [selectedYear]);
 
   // Helper to fetch all responses for the cycles (paginated, lightweight)
   const fetchResponsesData = useCallback(async (deptId: string, cyclesList: any[]) => {
@@ -111,6 +131,107 @@ export default function FacultyDashboard() {
     return ansResults.flat();
   }, []);
 
+  // Helper to load all data for a specific department
+  const loadDepartmentData = useCallback(async (deptId: string, forceRefreshAnswers = false, targetDeptsList?: any[]) => {
+    try {
+      setLoading(true);
+      setDashboardError(null);
+
+      const depts = targetDeptsList || departmentsListRef.current;
+      const targetDept = depts.find((d: any) => d.id === deptId);
+      if (targetDept) {
+        setDepartment(targetDept);
+      }
+      setSelectedDepartmentId(deptId);
+      selectedDepartmentIdRef.current = deptId;
+
+      // 1. Fetch Cycles for this Department
+      const { data: cycles, error: cyclesError } = await supabase
+        .from('feedback_cycles')
+        .select('*')
+        .eq('department_id', deptId)
+        .order('created_at', { ascending: false });
+      if (cyclesError) throw new Error(`Failed to load feedback cycles: ${cyclesError.message}`);
+
+      setAllCycles(cycles || []);
+      allCyclesRef.current = cycles || [];
+
+      if (cycles && cycles.length > 0) {
+        // Fetch Responses for all Cycles (paginated, fast)
+        const allResps = await fetchResponsesData(deptId, cycles);
+        setResponses(allResps);
+        responsesRef.current = allResps;
+
+        // Smart Initial Year Selection:
+        const currentYearCycle = cycles.find((c: any) => c.year === selectedYearRef.current);
+        if (!currentYearCycle) {
+          // If current selected year does not exist in this department's cycles, switch to available cycle's year
+          const defaultCycle = cycles.find((c: any) => allResps.some((r: any) => r.feedback_cycle_id === c.id)) || cycles[0];
+          setSelectedYear(defaultCycle.year);
+          selectedYearRef.current = defaultCycle.year;
+        } else {
+          // Check if another year has responses while current year doesn't
+          const hasCurrentResponses = allResps.some((r: any) => r.feedback_cycle_id === currentYearCycle.id);
+          if (!hasCurrentResponses) {
+            const cycleWithResponses = cycles.find((c: any) => allResps.some((r: any) => r.feedback_cycle_id === c.id));
+            if (cycleWithResponses) {
+              setSelectedYear(cycleWithResponses.year);
+              selectedYearRef.current = cycleWithResponses.year;
+            }
+          }
+        }
+
+        // Fetch Students in Department
+        const { data: stus, error: stusError } = await supabase
+          .from('students')
+          .select('*')
+          .eq('department_id', deptId);
+        if (stusError) throw new Error(`Failed to load students: ${stusError.message}`);
+        setStudents(stus || []);
+
+        // Fetch Questions
+        const { data: qs, error: qsError } = await supabase
+          .from('feedback_questions')
+          .select('*')
+          .order('question_number', { ascending: true });
+        if (qsError) throw new Error(`Failed to load feedback questions: ${qsError.message}`);
+        setQuestions(qs || []);
+
+        // Fetch Assignments (Courses) for Department
+        const { data: asgs, error: asgsError } = await supabase
+          .from('faculty_subject_assignments')
+          .select(`
+            id, faculty_id, subject_id, active, year, semester, section,
+            faculty:faculty_id (faculty_name),
+            subjects:subject_id (subject_name, course_code)
+          `)
+          .eq('department_id', deptId)
+          .eq('active', true);
+        if (asgsError) throw new Error(`Failed to load course assignments: ${asgsError.message}`);
+        setAssignments(asgs || []);
+
+        // Fetch Answers for those responses (detailed analytics)
+        if (forceRefreshAnswers || activeTabRef.current === 'results') {
+          setLoadingAnswers(true);
+          const allAnswers = await fetchAnswersForResponses(allResps);
+          setAnswers(allAnswers);
+          setLoadingAnswers(false);
+        }
+      } else {
+        setStudents([]);
+        setAssignments([]);
+        setResponses([]);
+        setAnswers([]);
+      }
+    } catch (err: any) {
+      console.error('Error loading department data:', err);
+      setDashboardError(err.message || 'Failed to load department data.');
+    } finally {
+      setLoading(false);
+      setLoadingAnswers(false);
+    }
+  }, [fetchResponsesData, fetchAnswersForResponses]);
+
   // Full initialization (Runs on mount or manual "Refresh Data")
   const initDashboard = useCallback(async (forceRefreshAnswers = true) => {
     try {
@@ -136,87 +257,42 @@ export default function FacultyDashboard() {
       setFaculty(fac);
       facultyRef.current = fac;
 
-      // 2. Fetch Department
-      const { data: dept, error: deptError } = await supabase
+      // 2. Fetch All Active Departments
+      const { data: allDepts, error: deptsError } = await supabase
         .from('departments')
         .select('*')
-        .eq('id', fac.department_id)
-        .single();
-      if (deptError) {
-        throw new Error(`Failed to load department: ${deptError.message}`);
+        .order('department_name', { ascending: true });
+      if (deptsError) {
+        throw new Error(`Failed to load departments: ${deptsError.message}`);
       }
-      setDepartment(dept);
+      const deptsList = allDepts || [];
+      setDepartmentsList(deptsList);
+      departmentsListRef.current = deptsList;
 
-      // 3. Fetch All Cycles for the Department
-      const { data: cycles, error: cyclesError } = await supabase
-        .from('feedback_cycles')
-        .select('*')
-        .eq('department_id', fac.department_id)
-        .order('created_at', { ascending: false });
-      if (cyclesError) {
-        throw new Error(`Failed to load feedback cycles: ${cyclesError.message}`);
-      }
-      setAllCycles(cycles || []);
-      allCyclesRef.current = cycles || [];
+      // 3. Compute Department-wise Completion Statistics across entire DB
+      const { data: allRespsSummary } = await supabase
+        .from('feedback_responses')
+        .select('department_id, student_id');
+      const { data: allStusSummary } = await supabase
+        .from('students')
+        .select('id, department_id');
 
-      if (cycles && cycles.length > 0) {
-        // Fetch Students in Department
-        const { data: stus, error: stusError } = await supabase
-          .from('students')
-          .select('*')
-          .eq('department_id', fac.department_id);
-        if (stusError) {
-          throw new Error(`Failed to load students: ${stusError.message}`);
-        }
-        setStudents(stus || []);
+      const statsMap: Record<string, { totalStudents: number; completedCount: number; pendingCount: number }> = {};
+      deptsList.forEach(d => {
+        const deptStus = (allStusSummary || []).filter(s => s.department_id === d.id);
+        const deptResps = (allRespsSummary || []).filter(r => r.department_id === d.id);
+        const distinctCompleted = new Set(deptResps.map(r => r.student_id)).size;
+        statsMap[d.id] = {
+          totalStudents: deptStus.length,
+          completedCount: distinctCompleted,
+          pendingCount: Math.max(0, deptStus.length - distinctCompleted)
+        };
+      });
+      setDeptCompletionStats(statsMap);
 
-        // Fetch Questions
-        const { data: qs, error: qsError } = await supabase
-          .from('feedback_questions')
-          .select('*')
-          .order('question_number', { ascending: true });
-        if (qsError) {
-          throw new Error(`Failed to load feedback questions: ${qsError.message}`);
-        }
-        setQuestions(qs || []);
-
-        // Fetch Assignments (Courses) for Department
-        const { data: asgs, error: asgsError } = await supabase
-          .from('faculty_subject_assignments')
-          .select(`
-            id, faculty_id, subject_id, active, year, semester, section,
-            faculty:faculty_id (faculty_name),
-            subjects:subject_id (subject_name, course_code)
-          `)
-          .eq('department_id', fac.department_id)
-          .eq('active', true);
-        if (asgsError) {
-          throw new Error(`Failed to load course assignments: ${asgsError.message}`);
-        }
-        setAssignments(asgs || []);
-
-        // Fetch Responses for all Cycles (paginated, fast)
-        const allResps = await fetchResponsesData(fac.department_id, cycles);
-        setResponses(allResps);
-        responsesRef.current = allResps;
-
-        // Smart Initial Year Selection: If Year 3 has 0 submissions and Year 2 has submissions, default to Year 2
-        const y3Cycle = cycles.find((c: any) => c.year === 3);
-        const y2Cycle = cycles.find((c: any) => c.year === 2);
-        const hasYear3Responses = y3Cycle && allResps.some((r: any) => r.feedback_cycle_id === y3Cycle.id);
-        const hasYear2Responses = y2Cycle && allResps.some((r: any) => r.feedback_cycle_id === y2Cycle.id);
-        if (!hasYear3Responses && hasYear2Responses) {
-          setSelectedYear(2);
-        }
-
-        // Fetch Answers for those responses (detailed analytics)
-        if (forceRefreshAnswers || activeTabRef.current === 'results') {
-          setLoadingAnswers(true);
-          const allAnswers = await fetchAnswersForResponses(allResps);
-          setAnswers(allAnswers);
-          setLoadingAnswers(false);
-        }
-      }
+      // 4. Select Department: either existing user selection or faculty's department (or first available)
+      const targetDeptId = selectedDepartmentIdRef.current || fac.department_id || deptsList[0]?.id;
+      await loadDepartmentData(targetDeptId, forceRefreshAnswers, deptsList);
     } catch (err: any) {
       console.error('Initialization error:', err);
       setDashboardError(err.message || 'Failed to initialize dashboard data.');
@@ -224,16 +300,16 @@ export default function FacultyDashboard() {
       setLoading(false);
       setLoadingAnswers(false);
     }
-  }, [navigate, fetchResponsesData, fetchAnswersForResponses]);
+  }, [navigate, loadDepartmentData]);
 
   // Background poll: ONLY fetch responses (zero feedback_answers queries)
   // Uses refs to ensure no stale closure over faculty or allCycles
   const pollResponsesBackground = useCallback(async () => {
-    const currentFaculty = facultyRef.current;
+    const currentDeptId = selectedDepartmentIdRef.current || facultyRef.current?.department_id;
     const currentCycles = allCyclesRef.current;
-    if (!currentFaculty || !currentCycles || currentCycles.length === 0) return;
+    if (!currentDeptId || !currentCycles || currentCycles.length === 0) return;
     try {
-      const allResps = await fetchResponsesData(currentFaculty.department_id, currentCycles);
+      const allResps = await fetchResponsesData(currentDeptId, currentCycles);
       setResponses(allResps);
       responsesRef.current = allResps;
     } catch (err: any) {
@@ -587,6 +663,11 @@ export default function FacultyDashboard() {
         completed.push({
           Register_Number: s.register_number,
           Student_Name: s.student_name,
+          Department: department?.department_name || '',
+          Department_Code: department?.department_code || '',
+          Year: s.year,
+          Semester: s.semester,
+          Section: s.section || 'A',
           Status: 'Completed',
           Completion_Percentage: `${completionPercentage}%`,
           Submitted: latest ? new Date(latest.submitted_at).toLocaleString() : 'N/A'
@@ -595,6 +676,11 @@ export default function FacultyDashboard() {
         pending.push({
           Register_Number: s.register_number,
           Student_Name: s.student_name,
+          Department: department?.department_name || '',
+          Department_Code: department?.department_code || '',
+          Year: s.year,
+          Semester: s.semester,
+          Section: s.section || 'A',
           Status: requiredCount === 0 ? 'No Subjects' : `Pending (${completedCount}/${requiredCount})`,
           Completion_Percentage: `${completionPercentage}%`,
           Submitted: '-'
@@ -628,35 +714,55 @@ export default function FacultyDashboard() {
   const resultData = calculateResult();
   const statusData = getStudentStatusData();
 
+  const filteredCompleted = statusData.completed.filter(s =>
+    !studentSearchQuery.trim() ||
+    s.Register_Number.toLowerCase().includes(studentSearchQuery.trim().toLowerCase()) ||
+    s.Student_Name.toLowerCase().includes(studentSearchQuery.trim().toLowerCase())
+  );
+
+  const filteredPending = statusData.pending.filter(s =>
+    !studentSearchQuery.trim() ||
+    s.Register_Number.toLowerCase().includes(studentSearchQuery.trim().toLowerCase()) ||
+    s.Student_Name.toLowerCase().includes(studentSearchQuery.trim().toLowerCase())
+  );
+
   const exportStatusWord = () => {
     const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
     
     let rowsHtml = '';
     for (let i = 0; i < maxRows; i++) {
-      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '' };
-      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '' };
+      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Department: '' };
+      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Department: '' };
       rowsHtml += `
         <tr>
           <td>${comp.Register_Number}</td>
           <td>${comp.Student_Name}</td>
+          <td>${comp.Department}</td>
           <td>${pend.Register_Number}</td>
           <td>${pend.Student_Name}</td>
+          <td>${pend.Department}</td>
         </tr>
       `;
     }
 
     const html = `
+      <div style="font-family: Arial, sans-serif; margin-bottom: 16px;">
+        <h2>${department?.department_name || 'All Departments'} — Student Feedback Status</h2>
+        <p>Year: ${selectedYear} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}</p>
+      </div>
       <table style="width: 100%; border-collapse: collapse;">
         <thead>
           <tr>
-            <th colspan="2" style="border: 1px solid black; padding: 8px;">Completed students</th>
-            <th colspan="2" style="border: 1px solid black; padding: 8px;">Pending students</th>
+            <th colspan="3" style="border: 1px solid black; padding: 8px; background-color: #d1fae5;">Completed Students (${statusData.completed.length})</th>
+            <th colspan="3" style="border: 1px solid black; padding: 8px; background-color: #fef3c7;">Pending Students (${statusData.pending.length})</th>
           </tr>
           <tr>
             <th style="border: 1px solid black; padding: 8px;">Register number</th>
             <th style="border: 1px solid black; padding: 8px;">Name</th>
+            <th style="border: 1px solid black; padding: 8px;">Department</th>
             <th style="border: 1px solid black; padding: 8px;">Register number</th>
             <th style="border: 1px solid black; padding: 8px;">Name</th>
+            <th style="border: 1px solid black; padding: 8px;">Department</th>
           </tr>
         </thead>
         <tbody>
@@ -665,10 +771,10 @@ export default function FacultyDashboard() {
       </table>
     `;
 
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Student Status</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 12px 16px; text-align: center; } th:nth-child(2), td:nth-child(2), th:nth-child(4), td:nth-child(4) { text-align: left; }</style></head><body>";
+    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Student Status</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px 12px; text-align: center; } th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3), th:nth-child(5), td:nth-child(5), th:nth-child(6), td:nth-child(6) { text-align: left; }</style></head><body>";
     const footer = "</body></html>";
     const content = header + html + footer;
-    const filename = 'Student_Status';
+    const filename = `${(department?.department_name || 'Department').replace(/[^a-zA-Z0-9]/g, '_')}_Student_Status`;
     
     // @ts-ignore
     if (window.htmlDocx && window.saveAs) {
@@ -690,31 +796,37 @@ export default function FacultyDashboard() {
   const exportStatusExcel = () => {
     const data: any[] = [];
     const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
-    data.push({ A: 'Completed students', B: '', C: 'Pending students', D: '' });
-    data.push({ A: 'Register number', B: 'Name', C: 'Register number', D: 'Name' });
+    data.push({ A: `${department?.department_name || 'Department'} — Year ${selectedYear} Student Feedback Status` });
+    data.push({ A: 'Completed students', B: '', C: '', D: 'Pending students', E: '', F: '' });
+    data.push({ A: 'Register number', B: 'Name', C: 'Department', D: 'Register number', E: 'Name', F: 'Department' });
     
     for (let i = 0; i < maxRows; i++) {
-      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '' };
-      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '' };
+      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Department: '' };
+      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Department: '' };
       data.push({
         A: comp.Register_Number,
         B: comp.Student_Name,
-        C: pend.Register_Number,
-        D: pend.Student_Name
+        C: comp.Department,
+        D: pend.Register_Number,
+        E: pend.Student_Name,
+        F: pend.Department
       });
     }
 
     const ws = XLSX.utils.json_to_sheet(data, { skipHeader: true });
     
     if(!ws['!merges']) ws['!merges'] = [];
-    ws['!merges'].push({ s: {r:0, c:0}, e: {r:0, c:1} });
-    ws['!merges'].push({ s: {r:0, c:2}, e: {r:0, c:3} });
+    ws['!merges'].push({ s: {r:0, c:0}, e: {r:0, c:5} });
+    ws['!merges'].push({ s: {r:1, c:0}, e: {r:1, c:2} });
+    ws['!merges'].push({ s: {r:1, c:3}, e: {r:1, c:5} });
     
-    ws['!cols'] = [{wch: 20}, {wch: 30}, {wch: 20}, {wch: 30}];
+    ws['!cols'] = [{wch: 18}, {wch: 28}, {wch: 24}, {wch: 18}, {wch: 28}, {wch: 24}];
     
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Student Status");
-    XLSX.writeFile(wb, "Student_Status.xlsx");
+    const sheetName = (department?.department_code || 'Status').slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const filename = `${(department?.department_name || 'Department').replace(/[^a-zA-Z0-9]/g, '_')}_Student_Status.xlsx`;
+    XLSX.writeFile(wb, filename);
   };
 
   return (
@@ -765,21 +877,48 @@ export default function FacultyDashboard() {
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         
         {/* Header */}
-        <header className="bg-white shadow-sm border-b border-gray-100 z-10 px-8 py-5 flex justify-between items-center">
+        <header className="bg-white shadow-sm border-b border-gray-100 z-10 px-8 py-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{department?.department_name}</h1>
+            <div className="flex items-center space-x-3">
+              <h1 className="text-2xl font-bold text-gray-900">{department?.department_name}</h1>
+              {department?.department_code && (
+                <span className="bg-blue-100 text-[#1E3A8A] text-xs font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  {department.department_code}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-gray-500 font-medium mt-1">Logged in as {faculty?.faculty_name}</p>
           </div>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm font-bold text-gray-700">Select Year:</span>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#1E3A8A] focus:border-[#1E3A8A] p-2.5 outline-none font-medium shadow-sm cursor-pointer"
-            >
-              <option value={2}>Second Year (II)</option>
-              <option value={3}>Third Year (III)</option>
-            </select>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Department:</span>
+              <select
+                value={selectedDepartmentId}
+                onChange={(e) => loadDepartmentData(e.target.value, false)}
+                className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#1E3A8A] focus:border-[#1E3A8A] p-2.5 outline-none font-semibold shadow-sm cursor-pointer"
+              >
+                {departmentsList.map(dept => {
+                  const stats = deptCompletionStats[dept.id];
+                  const compCount = stats?.completedCount || 0;
+                  return (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.department_name} ({dept.department_code}) {compCount > 0 ? `• ${compCount} Completed` : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Year:</span>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#1E3A8A] focus:border-[#1E3A8A] p-2.5 outline-none font-semibold shadow-sm cursor-pointer"
+              >
+                <option value={2}>Second Year (II)</option>
+                <option value={3}>Third Year (III)</option>
+              </select>
+            </div>
           </div>
         </header>
 
@@ -955,50 +1094,167 @@ export default function FacultyDashboard() {
 
           {/* TAB 2: STUDENT STATUS */}
           {activeTab === 'status' && (
-            <div className="animate-fade-in max-w-5xl mx-auto">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold text-gray-900">Student Response Status</h2>
-                <div className="flex space-x-3">
-                  <button onClick={() => { setLoading(true); initDashboard(); }} className="flex items-center px-4 py-2 bg-white text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors shadow-sm border border-gray-200">
-                    <RefreshCw className="w-4 h-4 mr-2 text-gray-500" /> Refresh
+            <div className="animate-fade-in max-w-6xl mx-auto">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Student Response Status (Department-Wise)</h2>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                    Viewing completed feedback records by department. Select any department to view student names and register numbers.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button onClick={() => { setLoading(true); initDashboard(); }} className="flex items-center px-3.5 py-2 bg-white text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors shadow-sm border border-gray-200 text-xs sm:text-sm">
+                    <RefreshCw className="w-4 h-4 mr-1.5 text-gray-500" /> Refresh
                   </button>
-                  <button onClick={exportStatusWord} className="flex items-center px-4 py-2 bg-blue-50 text-blue-700 font-semibold rounded-lg hover:bg-blue-100 transition-colors">
-                    <FileText className="w-4 h-4 mr-2" /> Export Word
+                  <button onClick={exportStatusWord} className="flex items-center px-3.5 py-2 bg-blue-50 text-blue-700 font-semibold rounded-xl hover:bg-blue-100 transition-colors text-xs sm:text-sm">
+                    <FileText className="w-4 h-4 mr-1.5" /> Export Word
                   </button>
-                  <button onClick={exportStatusExcel} className="flex items-center px-4 py-2 bg-emerald-50 text-emerald-700 font-semibold rounded-lg hover:bg-emerald-100 transition-colors">
-                    <FileSpreadsheet className="w-4 h-4 mr-2" /> Export Excel
+                  <button onClick={exportStatusExcel} className="flex items-center px-3.5 py-2 bg-emerald-50 text-emerald-700 font-semibold rounded-xl hover:bg-emerald-100 transition-colors text-xs sm:text-sm">
+                    <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Export Excel
                   </button>
                 </div>
               </div>
 
+              {/* Department Completion Overview Cards */}
+              <div className="bg-white p-6 rounded-[24px] shadow-sm border border-gray-100 mb-8">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                  <div className="flex items-center space-x-2">
+                    <Building2 className="w-5 h-5 text-[#1E3A8A]" />
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-gray-900">
+                      Department Completion Breakdown
+                    </h3>
+                  </div>
+                  <span className="text-xs font-semibold text-gray-500">
+                    Click any department below to view its completed students
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {departmentsList.map(dept => {
+                    const stats = deptCompletionStats[dept.id] || { totalStudents: 0, completedCount: 0, pendingCount: 0 };
+                    const isSelected = selectedDepartmentId === dept.id;
+                    const compCount = stats.completedCount;
+                    const totalCount = stats.totalStudents;
+                    const pct = totalCount > 0 ? Math.round((compCount / totalCount) * 100) : 0;
+
+                    return (
+                      <button
+                        key={dept.id}
+                        type="button"
+                        onClick={() => loadDepartmentData(dept.id, false)}
+                        className={`p-4 rounded-2xl text-left transition-all border cursor-pointer ${
+                          isSelected
+                            ? 'bg-blue-50/70 border-[#1E3A8A] ring-2 ring-[#1E3A8A]/20 shadow-sm'
+                            : 'bg-gray-50/60 hover:bg-gray-100/80 border-gray-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-bold text-sm text-gray-900 truncate max-w-[200px]">
+                            {dept.department_name}
+                          </span>
+                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase ${
+                            isSelected ? 'bg-[#1E3A8A] text-white' : 'bg-gray-200 text-gray-700'
+                          }`}>
+                            {dept.department_code}
+                          </span>
+                        </div>
+
+                        <div className="flex items-baseline justify-between">
+                          <div>
+                            <span className="text-2xl font-black text-gray-900">{compCount}</span>
+                            <span className="text-xs text-gray-500 font-semibold ml-1">/ {totalCount} completed</span>
+                          </div>
+                          <span className={`text-xs font-bold ${compCount > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                            {pct}%
+                          </span>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="w-full bg-gray-200 h-1.5 rounded-full mt-2.5 overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-300 ${compCount > 0 ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                            style={{ width: `${Math.min(100, pct)}%` }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Search & Active Department Indicator */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search student by name or register number (e.g. A2407008)..."
+                    value={studentSearchQuery}
+                    onChange={(e) => setStudentSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-xs sm:text-sm font-medium text-gray-900 focus:outline-none focus:border-[#1E3A8A] focus:ring-1 focus:ring-[#1E3A8A] shadow-sm"
+                  />
+                </div>
+
+                <div className="flex items-center space-x-2 text-xs font-semibold text-gray-600 bg-white px-4 py-2.5 rounded-xl border border-gray-200 shadow-sm">
+                  <span>Showing:</span>
+                  <span className="font-bold text-[#1E3A8A]">{department?.department_name}</span>
+                  <span className="text-gray-400">•</span>
+                  <span>Year {selectedYear}</span>
+                </div>
+              </div>
+
               <div id="export-status">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Completed Table */}
-                  <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden">
-                    <div className="bg-emerald-50 border-b border-emerald-100 px-6 py-4">
-                      <h3 className="font-bold text-emerald-800 flex items-center">
-                        <CheckCircle2 className="w-5 h-5 mr-2" /> Completed Students ({statusData.completed.length})
+                  <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+                    <div className="bg-emerald-50 border-b border-emerald-100 px-6 py-4 flex items-center justify-between">
+                      <h3 className="font-bold text-emerald-900 flex items-center text-sm sm:text-base">
+                        <CheckCircle2 className="w-5 h-5 mr-2 text-emerald-600" />
+                        Completed Students — {department?.department_name} ({filteredCompleted.length})
                       </h3>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
+                        Year {selectedYear}
+                      </span>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto max-h-[550px] overflow-y-auto">
                       <table className="w-full text-sm text-left">
-                        <thead className="bg-white text-gray-500 font-bold uppercase text-xs border-b border-gray-100">
+                        <thead className="bg-gray-50/80 text-gray-500 font-bold uppercase text-[11px] border-b border-gray-100 sticky top-0 z-10">
                           <tr>
-                            <th className="px-6 py-3">Reg. No</th>
-                            <th className="px-6 py-3">Name</th>
-                            <th className="px-6 py-3">Submitted At</th>
+                            <th className="px-3 py-3 text-center w-10">#</th>
+                            <th className="px-4 py-3">Reg. No</th>
+                            <th className="px-5 py-3">Student Name</th>
+                            <th className="px-4 py-3">Department</th>
+                            <th className="px-3 py-3 text-center">Sec</th>
+                            <th className="px-5 py-3">Submitted At</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {statusData.completed.map((s, i) => (
-                            <tr key={i} className="hover:bg-gray-50">
-                              <td className="px-6 py-3 font-semibold text-gray-900">{s.Register_Number}</td>
-                              <td className="px-6 py-3 font-medium text-gray-700">{s.Student_Name}</td>
-                              <td className="px-6 py-3 text-gray-500 text-xs">{s.Submitted}</td>
+                          {filteredCompleted.map((s, i) => (
+                            <tr key={i} className="hover:bg-emerald-50/40 transition-colors">
+                              <td className="px-3 py-3.5 text-center text-gray-400 font-mono text-xs">{i + 1}</td>
+                              <td className="px-4 py-3.5 font-bold font-mono text-gray-900">
+                                <span className="bg-gray-100 px-2.5 py-1 rounded-md text-xs border border-gray-200 shadow-2xs">
+                                  {s.Register_Number}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3.5 font-semibold text-gray-800">{s.Student_Name}</td>
+                              <td className="px-4 py-3.5">
+                                <span className="inline-block text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                                  {s.Department || department?.department_name}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3.5 text-center font-semibold text-gray-600 text-xs">
+                                {s.Section}
+                              </td>
+                              <td className="px-5 py-3.5 text-gray-500 text-xs font-medium">{s.Submitted}</td>
                             </tr>
                           ))}
-                          {statusData.completed.length === 0 && (
-                            <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-400">No completed students</td></tr>
+                          {filteredCompleted.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                                {studentSearchQuery ? `No completed students matching "${studentSearchQuery}"` : 'No completed students for this cycle'}
+                              </td>
+                            </tr>
                           )}
                         </tbody>
                       </table>
@@ -1006,33 +1262,59 @@ export default function FacultyDashboard() {
                   </div>
 
                   {/* Pending Table */}
-                  <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden">
-                    <div className="bg-amber-50 border-b border-amber-100 px-6 py-4">
-                      <h3 className="font-bold text-amber-800 flex items-center">
-                        <XCircle className="w-5 h-5 mr-2" /> Pending Students ({statusData.pending.length})
+                  <div className="bg-white rounded-[24px] shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+                    <div className="bg-amber-50 border-b border-amber-100 px-6 py-4 flex items-center justify-between">
+                      <h3 className="font-bold text-amber-900 flex items-center text-sm sm:text-base">
+                        <XCircle className="w-5 h-5 mr-2 text-amber-600" />
+                        Pending Students — {department?.department_name} ({filteredPending.length})
                       </h3>
+                      <span className="text-xs font-bold text-amber-700 bg-amber-100/80 px-2.5 py-1 rounded-full">
+                        Year {selectedYear}
+                      </span>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto max-h-[550px] overflow-y-auto">
                       <table className="w-full text-sm text-left">
-                        <thead className="bg-white text-gray-500 font-bold uppercase text-xs border-b border-gray-100">
+                        <thead className="bg-gray-50/80 text-gray-500 font-bold uppercase text-[11px] border-b border-gray-100 sticky top-0 z-10">
                           <tr>
-                            <th className="px-6 py-3">Reg. No</th>
-                            <th className="px-6 py-3">Name</th>
-                            <th className="px-6 py-3 text-center">Status</th>
+                            <th className="px-3 py-3 text-center w-10">#</th>
+                            <th className="px-4 py-3">Reg. No</th>
+                            <th className="px-5 py-3">Student Name</th>
+                            <th className="px-4 py-3">Department</th>
+                            <th className="px-3 py-3 text-center">Sec</th>
+                            <th className="px-4 py-3 text-center">Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {statusData.pending.map((s, i) => (
-                            <tr key={i} className="hover:bg-gray-50">
-                              <td className="px-6 py-3 font-semibold text-gray-900">{s.Register_Number}</td>
-                              <td className="px-6 py-3 font-medium text-gray-700">{s.Student_Name}</td>
-                              <td className="px-6 py-3 text-center">
-                                <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-md text-xs font-bold uppercase">{s.Status}</span>
+                          {filteredPending.map((s, i) => (
+                            <tr key={i} className="hover:bg-amber-50/40 transition-colors">
+                              <td className="px-3 py-3.5 text-center text-gray-400 font-mono text-xs">{i + 1}</td>
+                              <td className="px-4 py-3.5 font-bold font-mono text-gray-900">
+                                <span className="bg-gray-100 px-2.5 py-1 rounded-md text-xs border border-gray-200">
+                                  {s.Register_Number}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3.5 font-semibold text-gray-800">{s.Student_Name}</td>
+                              <td className="px-4 py-3.5">
+                                <span className="inline-block text-[11px] font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                                  {s.Department || department?.department_name}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3.5 text-center font-semibold text-gray-600 text-xs">
+                                {s.Section}
+                              </td>
+                              <td className="px-4 py-3.5 text-center">
+                                <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-md text-xs font-bold uppercase">
+                                  {s.Status}
+                                </span>
                               </td>
                             </tr>
                           ))}
-                          {statusData.pending.length === 0 && (
-                            <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-400">All students completed</td></tr>
+                          {filteredPending.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                                {studentSearchQuery ? `No pending students matching "${studentSearchQuery}"` : 'All students completed!'}
+                              </td>
+                            </tr>
                           )}
                         </tbody>
                       </table>

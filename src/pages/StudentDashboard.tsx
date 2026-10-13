@@ -248,8 +248,15 @@ export default function StudentDashboard() {
               <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
                 <CheckCircle className="w-12 h-12 text-emerald-500" />
               </div>
-              <div className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 mb-4 shadow-sm">
-                Status: Completed
+              <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
+                <span className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 shadow-sm">
+                  Status: Completed
+                </span>
+                {departmentName && (
+                  <span className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-blue-100 text-[#1E3A8A] shadow-sm">
+                    Department: {departmentName}
+                  </span>
+                )}
               </div>
               <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback form has been completed successfully!</h2>
               <p className="text-sm font-semibold text-gray-700 mb-1">

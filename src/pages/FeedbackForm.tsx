@@ -431,6 +431,9 @@ export default function FeedbackForm() {
     const updatedAll = { ...allRatings, [currentEval.key]: updatedForCurrent };
 
     setAllRatings(updatedAll);
+    // Automatically clear any stale submission warning as soon as student rates questions
+    setSubmissionError('');
+    setError('');
 
     // Persist draft locally scoped to student and cycle
     try {
@@ -464,6 +467,7 @@ export default function FeedbackForm() {
     }
 
     setError('');
+    setSubmissionError('');
     if (currentIndex < evaluations.length - 1) {
       const nextIdx = currentIndex + 1;
       setCurrentIndex(nextIdx);
@@ -477,6 +481,7 @@ export default function FeedbackForm() {
   // Previous Course / Previous Faculty (local navigation only — ZERO database writes) (Issue 10)
   const handlePrev = () => {
     setError('');
+    setSubmissionError('');
     if (currentIndex > 0) {
       const prevIdx = currentIndex - 1;
       setCurrentIndex(prevIdx);
@@ -491,6 +496,7 @@ export default function FeedbackForm() {
   const handleJumpToEvaluation = (targetIdx: number) => {
     if (targetIdx < 0 || targetIdx >= evaluations.length) return;
     setError('');
+    setSubmissionError('');
     setCurrentIndex(targetIdx);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (evaluations[targetIdx]) {
@@ -844,8 +850,15 @@ export default function FeedbackForm() {
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <CheckCircle2 className="w-12 h-12 text-emerald-500" />
             </div>
-            <div className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 mb-4 shadow-sm">
-              Status: Completed
+            <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
+              <span className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 shadow-sm">
+                Status: Completed
+              </span>
+              {departmentName && (
+                <span className="inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold bg-blue-100 text-[#1E3A8A] shadow-sm">
+                  Department: {departmentName}
+                </span>
+              )}
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback form has been completed successfully!</h2>
             <p className="text-sm font-semibold text-gray-700 mb-1">
@@ -1006,23 +1019,38 @@ export default function FeedbackForm() {
             {evaluations.map((ev, idx) => {
               const isDone = isEvaluationComplete(ev.key, allRatings, questions);
               const isSelected = idx === currentIndex;
+              const hasMultipleFaculties = ev.totalFacultiesForSubject > 1;
 
               return (
                 <button
                   key={ev.key}
                   type="button"
                   onClick={() => handleJumpToEvaluation(idx)}
-                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  title={`${ev.subjectName} - ${ev.facultyName}`}
+                  className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-[#1E3A8A] text-white shadow-sm ring-2 ring-[#1E3A8A]/30'
                       : isDone
                       ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/60'
                   }`}
                 >
-                  <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white' : isDone ? 'bg-emerald-500' : 'bg-gray-400'}`}></span>
-                  <span className="truncate max-w-[120px]">{ev.courseCode || `Course ${ev.subjectOrder}`}</span>
-                  {isDone && <CheckCircle2 className="w-3.5 h-3.5 ml-1 text-emerald-600" />}
+                  <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white' : isDone ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></span>
+                  <span className="truncate max-w-[170px]">
+                    {ev.courseCode || `Course ${ev.subjectOrder}`}
+                    {hasMultipleFaculties && (
+                      <span className="opacity-90 font-normal ml-1">
+                        ({ev.facultyName.replace(/^Mrs\.|^Mr\.|^Dr\.|^Ms\./i, '').trim().split(' ')[0]})
+                      </span>
+                    )}
+                  </span>
+                  {isDone ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 ml-1 text-emerald-600 flex-shrink-0" />
+                  ) : (
+                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-amber-200/80 text-amber-900 ml-1">
+                      Incomplete
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1032,17 +1060,24 @@ export default function FeedbackForm() {
         <div className="bg-white rounded-[24px] shadow-lg p-6 sm:p-10 border border-gray-100">
           <form onSubmit={handleSubmit}>
 
-            <div className="mb-8 pb-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="mb-8 pb-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">
-                  Evaluation {currentIndex + 1} of {evaluations.length}: {currentEval.subjectName}
-                </h2>
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <h2 className="text-xl font-bold text-gray-900">
+                    Evaluation {currentIndex + 1} of {evaluations.length}: {currentEval.subjectName}
+                  </h2>
+                  {currentEval.totalFacultiesForSubject > 1 && (
+                    <span className="bg-blue-100 text-[#1E3A8A] text-xs font-bold px-2.5 py-0.5 rounded-full">
+                      Faculty {currentEval.facultyOrderForSubject} of {currentEval.totalFacultiesForSubject}
+                    </span>
+                  )}
+                </div>
                 <p className="text-gray-500 text-sm">
-                  Rating Faculty: <span className="font-semibold text-gray-700">{currentEval.facultyName}</span>. Your feedback is completely anonymous.
+                  Rating Faculty: <span className="font-bold text-gray-800">{currentEval.facultyName}</span>. Your feedback is completely anonymous.
                 </p>
               </div>
               <div className="text-right flex items-center space-x-2">
-                <span className={`text-xs px-3 py-1 rounded-full font-bold ${
+                <span className={`text-xs px-3.5 py-1.5 rounded-full font-bold shadow-xs ${
                   isCurrentEvalComplete
                     ? 'bg-emerald-100 text-emerald-800'
                     : 'bg-amber-100 text-amber-800'
@@ -1089,14 +1124,37 @@ export default function FeedbackForm() {
 
             {/* 10 Questions Form */}
             <div className="space-y-10">
-              {questions.map((q, index) => (
-                <div key={q.id} className="animate-fade-in" style={{ animationDelay: `${index * 30}ms` }}>
-                  <div className="flex items-start mb-4">
-                    <span className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-[#1E3A8A] font-bold text-sm mr-4 flex-shrink-0">
-                      {q.question_number}
-                    </span>
-                    <p className="text-base sm:text-lg font-medium text-gray-900 pt-1">{q.question_text}</p>
-                  </div>
+              {questions.map((q, index) => {
+                const isAnswered = Boolean(currentAnswers[q.id]);
+                const isMissing = Boolean(submissionError && !isAnswered);
+
+                return (
+                  <div
+                    key={q.id}
+                    className={`animate-fade-in p-4 -mx-4 rounded-2xl transition-all ${
+                      isMissing ? 'bg-red-50/80 border border-red-200 shadow-xs' : ''
+                    }`}
+                    style={{ animationDelay: `${index * 30}ms` }}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-4">
+                      <div className="flex items-start">
+                        <span className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm mr-4 flex-shrink-0 ${
+                          isMissing
+                            ? 'bg-red-200 text-red-800'
+                            : isAnswered
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-blue-50 text-[#1E3A8A]'
+                        }`}>
+                          {q.question_number}
+                        </span>
+                        <p className="text-base sm:text-lg font-medium text-gray-900 pt-1">{q.question_text}</p>
+                      </div>
+                      {isMissing && (
+                        <span className="text-xs font-bold text-red-600 bg-red-100 px-2.5 py-1 rounded-full whitespace-nowrap">
+                          Required
+                        </span>
+                      )}
+                    </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pl-0 sm:pl-12 mt-3 sm:mt-0">
                     {ratings.map((rating) => {
@@ -1119,7 +1177,8 @@ export default function FeedbackForm() {
                     })}
                   </div>
                 </div>
-              ))}
+              );
+            })}
             </div>
 
             {/* Bottom Action Bar */}
@@ -1138,7 +1197,18 @@ export default function FeedbackForm() {
                 )}
               </div>
 
-              <div className="flex items-center space-x-4">
+              <div className="flex flex-wrap items-center gap-3">
+                {overallProgressPercent === 100 && !isLastEvaluation && (
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex items-center justify-center px-7 py-4 rounded-[20px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-base transition-all shadow-[0_8px_20px_rgb(5,150,105,0.35)] hover:-translate-y-0.5 disabled:opacity-70 cursor-pointer"
+                  >
+                    {submitting ? 'Submitting...' : 'Submit Feedback (100% Ready)'}
+                    {!submitting && <Send className="w-5 h-5 ml-2" />}
+                  </button>
+                )}
+
                 {!isLastEvaluation ? (
                   <button
                     type="button"
