@@ -592,7 +592,7 @@ export default function FeedbackForm() {
           .select('*', { count: 'exact', head: true })
           .in('response_id', preRespIds);
 
-        if (!preAnsErr && preAnsCount === expectedTotalAnswers) {
+        if (!preAnsErr && typeof preAnsCount === 'number' && preAnsCount >= expectedTotalAnswers) {
           // Confirmed: 100% of answers already persisted safely
           try {
             localStorage.removeItem(`tpt_feedback_draft_${student.id}_${activeCycle.id}`);
@@ -627,13 +627,41 @@ export default function FeedbackForm() {
       });
 
       if (rpcErr || !rpcData || rpcData.success !== true) {
+        console.warn("RPC returned error or timed out, performing recovery verification against database:", rpcErr || rpcData?.error);
+
+        // Safe timeout/network drop check: verify if the transaction was committed despite client network error
+        try {
+          const timeoutRecovery = await verifyStudentFeedbackCompletion({
+            studentId: verifiedStudent.id,
+            registerNumber: verifiedStudent.register_number,
+            feedbackCycleId: verifiedCycle.id,
+            departmentId: verifiedStudent.department_id,
+            year: verifiedStudent.year,
+            semester: verifiedStudent.semester,
+            section: verifiedStudent.section,
+            evaluations,
+            questionsCount: questions.length
+          });
+          if (timeoutRecovery) {
+            console.log('[Recovery Success] Submission was already committed in Supabase!');
+            setSubmitted(true);
+            try {
+              localStorage.removeItem(`tpt_feedback_draft_${verifiedStudent.id}_${verifiedCycle.id}`);
+              localStorage.removeItem(`tpt_feedback_draft_${student.id}_${activeCycle.id}`);
+            } catch {}
+            return;
+          }
+        } catch (recoverCheckErr) {
+          console.warn('Recovery verification check failed:', recoverCheckErr);
+        }
+
         console.error(
           "Feedback database submission failed:",
           rpcErr || rpcData?.error
         );
 
         setSubmissionError(
-          "Please try again. The feedback form was not saved in the database."
+          rpcData?.error || "Please try again. The feedback form was not saved in the database."
         );
         window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
