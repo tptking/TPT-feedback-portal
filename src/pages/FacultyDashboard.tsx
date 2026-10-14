@@ -592,37 +592,11 @@ export default function FacultyDashboard() {
 
     const overallPercentage = totalMaxMarks > 0 ? ((totalObtainedMarks / totalMaxMarks) * 100).toFixed(2) : "0.00";
     
-    const matchesSection = (asgSec?: string | null, stuSec?: string | null): boolean => {
-      const cleanAsg = asgSec ? asgSec.trim().toUpperCase() : '';
-      const cleanStu = stuSec ? stuSec.trim().toUpperCase() : '';
-      if (cleanAsg) {
-        return cleanStu === cleanAsg;
-      }
-      return true;
-    };
 
     let fullyCompletedCount = 0;
     filteredStudents.forEach(s => {
-      const studentAssignments = filteredAssignments.filter(
-        a => a.active === true && a.semester === s.semester && matchesSection(a.section, s.section)
-      );
-      const requiredCount = studentAssignments.length;
       const sResponses = filteredResponses.filter(r => r.student_id === s.id);
-      const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
-      const completedCount = completedSet.size;
-
-      const completionPercentage =
-        requiredCount > 0
-          ? Math.min(100, Math.round((completedCount / requiredCount) * 100))
-          : 0;
-
-      const isCompleted =
-        requiredCount > 0 &&
-        (completedCount >= requiredCount ||
-         completionPercentage >= 100 ||
-         studentAssignments.every(a => completedSet.has(`${a.subject_id}-${a.faculty_id}`)));
-
-      if (isCompleted) {
+      if (sResponses.length > 0) {
         fullyCompletedCount++;
       }
     });
@@ -664,11 +638,7 @@ export default function FacultyDashboard() {
           ? Math.min(100, Math.round((completedCount / requiredCount) * 100))
           : 0;
 
-      const isCompleted =
-        requiredCount > 0 &&
-        (completedCount >= requiredCount ||
-         completionPercentage >= 100 ||
-         studentAssignments.every(a => completedSet.has(`${a.subject_id}-${a.faculty_id}`)));
+      const isCompleted = sResponses.length > 0;
 
       if (isCompleted) {
         const latest = sResponses.reduce((a, b) => new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, sResponses[0]);
@@ -681,7 +651,7 @@ export default function FacultyDashboard() {
           Semester: s.semester,
           Section: s.section || 'A',
           Status: 'Completed',
-          Completion_Percentage: `${completionPercentage}%`,
+          Completion_Percentage: `${completionPercentage || 100}%`,
           Submitted: latest ? new Date(latest.submitted_at).toLocaleString() : 'N/A'
         });
       } else {
@@ -693,7 +663,7 @@ export default function FacultyDashboard() {
           Year: s.year,
           Semester: s.semester,
           Section: s.section || 'A',
-          Status: requiredCount === 0 ? 'No Subjects' : `Pending (${completedCount}/${requiredCount})`,
+          Status: requiredCount === 0 ? 'No Subjects' : `Pending (0/${requiredCount})`,
           Completion_Percentage: `${completionPercentage}%`,
           Submitted: '-'
         });
