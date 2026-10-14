@@ -613,10 +613,16 @@ export default function FacultyDashboard() {
 
       const completionPercentage =
         requiredCount > 0
-          ? Math.round((completedCount / requiredCount) * 100)
+          ? Math.min(100, Math.round((completedCount / requiredCount) * 100))
           : 0;
 
-      if (requiredCount > 0 && completionPercentage === 100) {
+      const isCompleted =
+        requiredCount > 0 &&
+        (completedCount >= requiredCount ||
+         completionPercentage >= 100 ||
+         studentAssignments.every(a => completedSet.has(`${a.subject_id}-${a.faculty_id}`)));
+
+      if (isCompleted) {
         fullyCompletedCount++;
       }
     });
@@ -655,10 +661,16 @@ export default function FacultyDashboard() {
 
       const completionPercentage =
         requiredCount > 0
-          ? Math.round((completedCount / requiredCount) * 100)
+          ? Math.min(100, Math.round((completedCount / requiredCount) * 100))
           : 0;
 
-      if (requiredCount > 0 && completedCount >= requiredCount) {
+      const isCompleted =
+        requiredCount > 0 &&
+        (completedCount >= requiredCount ||
+         completionPercentage >= 100 ||
+         studentAssignments.every(a => completedSet.has(`${a.subject_id}-${a.faculty_id}`)));
+
+      if (isCompleted) {
         const latest = sResponses.reduce((a, b) => new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, sResponses[0]);
         completed.push({
           Register_Number: s.register_number,
