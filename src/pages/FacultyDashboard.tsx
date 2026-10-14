@@ -1013,9 +1013,9 @@ export default function FacultyDashboard() {
             <div className="animate-fade-in max-w-6xl mx-auto">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h2 className="text-xl font-bold text-gray-900">Student Response Status</h2>
+                  <h2 className="text-xl font-bold text-gray-900">{department?.department_name} — Student Response Status</h2>
                   <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-                    Viewing completed and pending feedback records for {department?.department_name || 'your department'}.
+                    Viewing completed and pending feedback records for {department?.department_name}.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2.5">
