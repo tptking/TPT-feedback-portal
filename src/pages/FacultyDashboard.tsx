@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Building2, Search } from 'lucide-react';
+import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function FacultyDashboard() {
@@ -11,9 +11,6 @@ export default function FacultyDashboard() {
   
   const [faculty, setFaculty] = useState<any>(null);
   const [department, setDepartment] = useState<any>(null);
-  const [departmentsList, setDepartmentsList] = useState<any[]>([]);
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
-  const [deptCompletionStats, setDeptCompletionStats] = useState<Record<string, { totalStudents: number; completedCount: number; pendingCount: number }>>({});
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
 
   const [allCycles, setAllCycles] = useState<any[]>([]);
@@ -38,32 +35,7 @@ export default function FacultyDashboard() {
   const activeTabRef = useRef<'results' | 'status' | 'control'>('results');
   const responsesRef = useRef<any[]>([]);
   const selectedDepartmentIdRef = useRef<string>('');
-  const departmentsListRef = useRef<any[]>([]);
   const selectedYearRef = useRef<number>(3);
-
-  useEffect(() => {
-    facultyRef.current = faculty;
-  }, [faculty]);
-
-  useEffect(() => {
-    allCyclesRef.current = allCycles;
-  }, [allCycles]);
-
-  useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
-
-  useEffect(() => {
-    responsesRef.current = responses;
-  }, [responses]);
-
-  useEffect(() => {
-    selectedDepartmentIdRef.current = selectedDepartmentId;
-  }, [selectedDepartmentId]);
-
-  useEffect(() => {
-    departmentsListRef.current = departmentsList;
-  }, [departmentsList]);
 
   useEffect(() => {
     selectedYearRef.current = selectedYear;
@@ -132,18 +104,21 @@ export default function FacultyDashboard() {
   }, []);
 
   // Helper to load all data for a specific department
-  const loadDepartmentData = useCallback(async (deptId: string, forceRefreshAnswers = false, targetDeptsList?: any[]) => {
+  const loadDepartmentData = useCallback(async (deptId: string, forceRefreshAnswers = false) => {
     try {
       setLoading(true);
       setDashboardError(null);
 
-      const depts = targetDeptsList || departmentsListRef.current;
-      const targetDept = depts.find((d: any) => d.id === deptId);
-      if (targetDept) {
-        setDepartment(targetDept);
-      }
-      setSelectedDepartmentId(deptId);
       selectedDepartmentIdRef.current = deptId;
+
+      const { data: deptData } = await supabase
+        .from('departments')
+        .select('*')
+        .eq('id', deptId)
+        .single();
+      if (deptData) {
+        setDepartment(deptData);
+      }
 
       // 1. Fetch Cycles for this Department
       const { data: cycles, error: cyclesError } = await supabase
@@ -257,42 +232,19 @@ export default function FacultyDashboard() {
       setFaculty(fac);
       facultyRef.current = fac;
 
-      // 2. Fetch All Active Departments
-      const { data: allDepts, error: deptsError } = await supabase
+      // 2. Fetch Logged-in Faculty's Department
+      const { data: deptData, error: deptError } = await supabase
         .from('departments')
         .select('*')
-        .order('department_name', { ascending: true });
-      if (deptsError) {
-        throw new Error(`Failed to load departments: ${deptsError.message}`);
+        .eq('id', fac.department_id)
+        .single();
+      if (deptError) {
+        throw new Error(`Failed to load department: ${deptError.message}`);
       }
-      const deptsList = allDepts || [];
-      setDepartmentsList(deptsList);
-      departmentsListRef.current = deptsList;
+      setDepartment(deptData);
 
-      // 3. Compute Department-wise Completion Statistics across entire DB
-      const { data: allRespsSummary } = await supabase
-        .from('feedback_responses')
-        .select('department_id, student_id');
-      const { data: allStusSummary } = await supabase
-        .from('students')
-        .select('id, department_id');
-
-      const statsMap: Record<string, { totalStudents: number; completedCount: number; pendingCount: number }> = {};
-      deptsList.forEach(d => {
-        const deptStus = (allStusSummary || []).filter(s => s.department_id === d.id);
-        const deptResps = (allRespsSummary || []).filter(r => r.department_id === d.id);
-        const distinctCompleted = new Set(deptResps.map(r => r.student_id)).size;
-        statsMap[d.id] = {
-          totalStudents: deptStus.length,
-          completedCount: distinctCompleted,
-          pendingCount: Math.max(0, deptStus.length - distinctCompleted)
-        };
-      });
-      setDeptCompletionStats(statsMap);
-
-      // 4. Select Department: either existing user selection or faculty's department (or first available)
-      const targetDeptId = selectedDepartmentIdRef.current || fac.department_id || deptsList[0]?.id;
-      await loadDepartmentData(targetDeptId, forceRefreshAnswers, deptsList);
+      // 3. Load Department Data for logged-in faculty only
+      await loadDepartmentData(fac.department_id, forceRefreshAnswers);
     } catch (err: any) {
       console.error('Initialization error:', err);
       setDashboardError(err.message || 'Failed to initialize dashboard data.');
@@ -873,24 +825,6 @@ export default function FacultyDashboard() {
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Department:</span>
-              <select
-                value={selectedDepartmentId}
-                onChange={(e) => loadDepartmentData(e.target.value, false)}
-                className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#1E3A8A] focus:border-[#1E3A8A] p-2.5 outline-none font-semibold shadow-sm cursor-pointer"
-              >
-                {departmentsList.map(dept => {
-                  const stats = deptCompletionStats[dept.id];
-                  const compCount = stats?.completedCount || 0;
-                  return (
-                    <option key={dept.id} value={dept.id}>
-                      {dept.department_name} ({dept.department_code}) {compCount > 0 ? `• ${compCount} Completed` : ''}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-            <div className="flex items-center space-x-2">
               <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Year:</span>
               <select
                 value={selectedYear}
@@ -1079,9 +1013,9 @@ export default function FacultyDashboard() {
             <div className="animate-fade-in max-w-6xl mx-auto">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h2 className="text-xl font-bold text-gray-900">Student Response Status (Department-Wise)</h2>
+                  <h2 className="text-xl font-bold text-gray-900">Student Response Status</h2>
                   <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-                    Viewing completed feedback records by department. Select any department to view student names and register numbers.
+                    Viewing completed and pending feedback records for {department?.department_name || 'your department'}.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2.5">
@@ -1094,73 +1028,6 @@ export default function FacultyDashboard() {
                   <button onClick={exportStatusExcel} className="flex items-center px-3.5 py-2 bg-emerald-50 text-emerald-700 font-semibold rounded-xl hover:bg-emerald-100 transition-colors text-xs sm:text-sm">
                     <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Export Excel
                   </button>
-                </div>
-              </div>
-
-              {/* Department Completion Overview Cards */}
-              <div className="bg-white p-6 rounded-[24px] shadow-sm border border-gray-100 mb-8">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <Building2 className="w-5 h-5 text-[#1E3A8A]" />
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-gray-900">
-                      Department Completion Breakdown
-                    </h3>
-                  </div>
-                  <span className="text-xs font-semibold text-gray-500">
-                    Click any department below to view its completed students
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {departmentsList.map(dept => {
-                    const stats = deptCompletionStats[dept.id] || { totalStudents: 0, completedCount: 0, pendingCount: 0 };
-                    const isSelected = selectedDepartmentId === dept.id;
-                    const compCount = stats.completedCount;
-                    const totalCount = stats.totalStudents;
-                    const pct = totalCount > 0 ? Math.round((compCount / totalCount) * 100) : 0;
-
-                    return (
-                      <button
-                        key={dept.id}
-                        type="button"
-                        onClick={() => loadDepartmentData(dept.id, false)}
-                        className={`p-4 rounded-2xl text-left transition-all border cursor-pointer ${
-                          isSelected
-                            ? 'bg-blue-50/70 border-[#1E3A8A] ring-2 ring-[#1E3A8A]/20 shadow-sm'
-                            : 'bg-gray-50/60 hover:bg-gray-100/80 border-gray-200'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-bold text-sm text-gray-900 truncate max-w-[200px]">
-                            {dept.department_name}
-                          </span>
-                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase ${
-                            isSelected ? 'bg-[#1E3A8A] text-white' : 'bg-gray-200 text-gray-700'
-                          }`}>
-                            {dept.department_code}
-                          </span>
-                        </div>
-
-                        <div className="flex items-baseline justify-between">
-                          <div>
-                            <span className="text-2xl font-black text-gray-900">{compCount}</span>
-                            <span className="text-xs text-gray-500 font-semibold ml-1">/ {totalCount} completed</span>
-                          </div>
-                          <span className={`text-xs font-bold ${compCount > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
-                            {pct}%
-                          </span>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="w-full bg-gray-200 h-1.5 rounded-full mt-2.5 overflow-hidden">
-                          <div
-                            className={`h-full transition-all duration-300 ${compCount > 0 ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                            style={{ width: `${Math.min(100, pct)}%` }}
-                          />
-                        </div>
-                      </button>
-                    );
-                  })}
                 </div>
               </div>
 
