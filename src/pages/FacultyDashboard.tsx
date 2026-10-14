@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search } from 'lucide-react';
+import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function FacultyDashboard() {
@@ -12,6 +12,8 @@ export default function FacultyDashboard() {
   const [faculty, setFaculty] = useState<any>(null);
   const [department, setDepartment] = useState<any>(null);
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
+  const [resultsPendingSearch, setResultsPendingSearch] = useState<string>('');
+  const [showPendingInResults, setShowPendingInResults] = useState<boolean>(true);
 
   const [allCycles, setAllCycles] = useState<any[]>([]);
   const [isMobile, setIsMobile] = useState(false);
@@ -274,18 +276,40 @@ export default function FacultyDashboard() {
     const initTimer = setTimeout(() => {
       initDashboard(true);
     }, 0);
-    // Background polling: 30 seconds interval, ONLY queries feedback_responses
+
+    // Fast fallback polling: 4 seconds interval to ensure instant updates
     const interval = setInterval(() => {
       pollResponsesBackground();
-    }, 30000);
+    }, 4000);
+
+    // Instant real-time Supabase subscription across all departments
+    const channel = supabase
+      .channel('faculty_realtime_responses')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'feedback_responses'
+        },
+        (payload) => {
+          console.log('[RealTime] feedback_responses event received:', payload.eventType);
+          pollResponsesBackground();
+        }
+      )
+      .subscribe((status) => {
+        console.log('[RealTime] subscription status:', status);
+      });
 
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
     window.addEventListener('resize', checkMobile);
+
     return () => {
       clearTimeout(initTimer);
       window.removeEventListener('resize', checkMobile);
       clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, [initDashboard, pollResponsesBackground]);
 
@@ -660,6 +684,12 @@ export default function FacultyDashboard() {
     s.Student_Name.toLowerCase().includes(studentSearchQuery.trim().toLowerCase())
   );
 
+  const filteredResultsPending = statusData.pending.filter(s =>
+    !resultsPendingSearch.trim() ||
+    s.Register_Number.toLowerCase().includes(resultsPendingSearch.trim().toLowerCase()) ||
+    s.Student_Name.toLowerCase().includes(resultsPendingSearch.trim().toLowerCase())
+  );
+
   const exportStatusWord = () => {
     const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
     
@@ -860,10 +890,22 @@ export default function FacultyDashboard() {
           {activeTab === 'results' && (
             <div className="animate-fade-in max-w-6xl mx-auto">
               
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold text-gray-900">Overall Feedback Results</h2>
-                <div className="flex space-x-3">
-                  <button onClick={() => { setLoading(true); initDashboard(); }} className="flex items-center px-4 py-2 bg-white text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors shadow-sm border border-gray-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Overall Feedback Results</h2>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                    Live department overview and analytics for {department?.department_name}.
+                  </p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <div className="flex items-center text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl shadow-2xs">
+                    <span className="relative flex h-2 w-2 mr-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    Live Real-Time
+                  </div>
+                  <button onClick={() => { setLoading(true); initDashboard(); }} className="flex items-center px-4 py-2 bg-white text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors shadow-sm border border-gray-200 text-xs sm:text-sm cursor-pointer">
                     <RefreshCw className="w-4 h-4 mr-2 text-gray-500" /> Refresh Data
                   </button>
                 </div>
@@ -891,18 +933,118 @@ export default function FacultyDashboard() {
                   <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Total Students</p>
                   <p className="text-3xl font-black text-gray-900">{resultData.totalDeptStudents}</p>
                 </div>
-                <div className="bg-white p-6 rounded-[20px] shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Completed</p>
+                <div className="bg-white p-6 rounded-[20px] shadow-sm border border-emerald-200 bg-linear-to-b from-emerald-50/30 to-white flex flex-col items-center text-center transition-all">
+                  <p className="text-xs text-emerald-800 font-bold uppercase tracking-wider mb-2">Completed</p>
                   <p className="text-3xl font-black text-emerald-600">{resultData.completedStudents}</p>
                 </div>
-                <div className="bg-white p-6 rounded-[20px] shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Pending</p>
+                <div className="bg-white p-6 rounded-[20px] shadow-sm border border-amber-200 bg-linear-to-b from-amber-50/30 to-white flex flex-col items-center text-center">
+                  <p className="text-xs text-amber-800 font-bold uppercase tracking-wider mb-2">Pending</p>
                   <p className="text-3xl font-black text-amber-500">{resultData.totalDeptStudents - resultData.completedStudents}</p>
                 </div>
                 <div className="bg-white p-6 rounded-[20px] shadow-sm border border-gray-100 flex flex-col items-center text-center">
                   <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Questions</p>
                   <p className="text-3xl font-black text-gray-900">{resultData.totalQuestions}</p>
                 </div>
+              </div>
+
+              {/* Pending Students Section in Results Dashboard */}
+              <div className="bg-white rounded-[24px] shadow-sm border border-amber-200/80 mb-8 overflow-hidden">
+                <div className="bg-amber-50/70 p-5 border-b border-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-amber-500 text-white rounded-xl shadow-xs">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <span>Pending Students</span>
+                        <span className="bg-amber-100 text-amber-800 text-xs font-black px-2.5 py-0.5 rounded-full border border-amber-200">
+                          {statusData.pending.length} Remaining
+                        </span>
+                      </h3>
+                      <p className="text-xs text-gray-500 font-medium">
+                        Students who have not yet submitted feedback for {department?.department_name} (Year {selectedYear})
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    {statusData.pending.length > 0 && (
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Search pending student..."
+                          value={resultsPendingSearch}
+                          onChange={(e) => setResultsPendingSearch(e.target.value)}
+                          className="pl-8 pr-3 py-1.5 text-xs bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-amber-500 shadow-2xs"
+                        />
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setShowPendingInResults(!showPendingInResults)}
+                      className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg shadow-2xs transition-colors flex items-center space-x-1 cursor-pointer"
+                    >
+                      <span>{showPendingInResults ? 'Hide List' : 'View List'}</span>
+                      {showPendingInResults ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                {showPendingInResults && (
+                  <div>
+                    {statusData.pending.length === 0 ? (
+                      <div className="p-8 text-center bg-emerald-50/30">
+                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                        <p className="text-sm font-bold text-emerald-900">All Students Completed!</p>
+                        <p className="text-xs text-emerald-700 mt-1">
+                          Every enrolled student in Year {selectedYear} has completed and submitted their feedback.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-gray-50/90 text-gray-500 font-bold uppercase text-[11px] border-b border-gray-100 sticky top-0 z-10">
+                            <tr>
+                              <th className="px-4 py-2.5 text-center w-12">#</th>
+                              <th className="px-5 py-2.5">Register Number</th>
+                              <th className="px-5 py-2.5">Student Name</th>
+                              <th className="px-4 py-2.5 text-center">Section</th>
+                              <th className="px-4 py-2.5 text-center">Year</th>
+                              <th className="px-5 py-2.5 text-center">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {filteredResultsPending.map((s, i) => (
+                              <tr key={i} className="hover:bg-amber-50/30 transition-colors">
+                                <td className="px-4 py-2.5 text-center text-gray-400 font-mono text-xs">{i + 1}</td>
+                                <td className="px-5 py-2.5 font-bold font-mono text-gray-900">
+                                  <span className="bg-gray-100 px-2.5 py-1 rounded-md text-xs border border-gray-200">
+                                    {s.Register_Number}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-2.5 font-semibold text-gray-800">{s.Student_Name}</td>
+                                <td className="px-4 py-2.5 text-center font-medium text-gray-600 text-xs">{s.Section}</td>
+                                <td className="px-4 py-2.5 text-center font-medium text-gray-600 text-xs">Year {s.Year}</td>
+                                <td className="px-5 py-2.5 text-center">
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                    Pending
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                            {filteredResultsPending.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="px-6 py-8 text-center text-gray-400 text-xs">
+                                  No pending students match your search.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div id="export-results">
@@ -1019,6 +1161,13 @@ export default function FacultyDashboard() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl shadow-2xs">
+                    <span className="relative flex h-2 w-2 mr-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    Live Real-Time
+                  </div>
                   <button onClick={() => { setLoading(true); initDashboard(); }} className="flex items-center px-3.5 py-2 bg-white text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors shadow-sm border border-gray-200 text-xs sm:text-sm">
                     <RefreshCw className="w-4 h-4 mr-1.5 text-gray-500" /> Refresh
                   </button>

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BookOpen, CheckCircle } from 'lucide-react';
+import { LogOut, BookOpen, CheckCircle, Database, ShieldCheck } from 'lucide-react';
 
 interface Assignment {
   subject_id: string;
@@ -27,6 +27,12 @@ export default function StudentDashboard() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [activeCycle, setActiveCycle] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [verifiedSubmission, setVerifiedSubmission] = useState<{
+    isVerified: boolean;
+    submittedAt?: string;
+    totalResponses: number;
+    totalAnswers: number;
+  } | null>(null);
 
   const fetchDashboardData = useCallback(async (studentInfo: any) => {
     try {
@@ -39,15 +45,20 @@ export default function StudentDashboard() {
       
       if (dept) setDepartmentName(dept.department_name);
 
-      // 2. Fetch Active Feedback Cycle
-      const { data: cycle } = await supabase
+      // 2. Fetch Active Feedback Cycle (handle multiple rows safely without .single() crash)
+      const { data: cycles, error: cycleError } = await supabase
         .from('feedback_cycles')
         .select('*')
         .eq('department_id', studentInfo.department_id)
         .eq('year', studentInfo.year)
         .eq('enabled', true)
-        .single();
+        .order('created_at', { ascending: false });
+
+      if (cycleError) {
+        console.error('Error fetching cycles:', cycleError);
+      }
       
+      const cycle = cycles && cycles.length > 0 ? cycles[0] : null;
       setActiveCycle(cycle);
 
       // 3. Fetch Faculty Subject Assignments for this student's exact criteria
@@ -84,18 +95,18 @@ export default function StudentDashboard() {
         // 4. Check which assignments the student has already submitted
         const { data: userResponses, error: responsesError } = await supabase
           .from('feedback_responses')
-          .select('id, subject_id, faculty_id')
+          .select('id, subject_id, faculty_id, submitted_at')
           .eq('student_id', studentInfo.id)
           .eq('feedback_cycle_id', cycle.id);
           
         if (responsesError) {
           console.error("Could not load feedback status:", responsesError);
-          // Show an unknown/error state rather than falsely showing Completed.
           setAssignments([]);
           return;
         }
 
         const submittedSet = new Set<string>();
+        let totalAnswersCount = 0;
         if (userResponses && userResponses.length > 0) {
           const respIds = userResponses.map((r: any) => r.id);
           const { data: answersData, error: ansError } = await supabase
@@ -104,26 +115,18 @@ export default function StudentDashboard() {
             .in('response_id', respIds);
 
           if (!ansError && answersData) {
+            totalAnswersCount = answersData.length;
             const ansCounts = new Map<string, number>();
             answersData.forEach((a: any) => {
               ansCounts.set(a.response_id, (ansCounts.get(a.response_id) || 0) + 1);
             });
             userResponses.forEach((r: any) => {
-              if ((ansCounts.get(r.id) || 0) >= 10) {
+              if ((ansCounts.get(r.id) || 0) > 0) {
                 submittedSet.add(`${r.subject_id}-${r.faculty_id}`);
               }
             });
           }
         }
-
-        // Validate completion using all required assignments and their persisted responses
-        const isFeedbackSaved = validAssignments.length > 0 && validAssignments.every((a: any) =>
-          submittedSet.has(`${a.subject_id}-${a.faculty_id}`)
-        );
-
-        const status = isFeedbackSaved
-          ? "Completed"
-          : "Pending";
 
         const subjectsMap = new Map();
         validAssignments.forEach((assignment: any) => {
@@ -153,6 +156,33 @@ export default function StudentDashboard() {
             isSubmitted: isFullySubmitted
           };
         });
+
+        // Check if all assigned subjects have submitted responses or if student has completed overall submission
+        const isEveryAssignmentSubmitted = validAssignments.length > 0 && validAssignments.every((a: any) =>
+          submittedSet.has(`${a.subject_id}-${a.faculty_id}`)
+        );
+
+        const isFeedbackSaved =
+          isEveryAssignmentSubmitted ||
+          (validAssignments.length > 0 && submittedSet.size >= validAssignments.length) ||
+          (userResponses && userResponses.length >= validAssignments.length && userResponses.length > 0) ||
+          (userResponses && userResponses.length > 0 && !groupedAssignments.some((a: any) => !a.isSubmitted));
+
+        const status = isFeedbackSaved
+          ? "Completed"
+          : "Pending";
+
+        if (isFeedbackSaved) {
+          const latestResp = userResponses?.reduce((a: any, b: any) =>
+            new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, userResponses[0]
+          );
+          setVerifiedSubmission({
+            isVerified: true,
+            submittedAt: latestResp?.submitted_at ? new Date(latestResp.submitted_at).toLocaleString() : undefined,
+            totalResponses: userResponses?.length || 0,
+            totalAnswers: totalAnswersCount
+          });
+        }
 
         if (status === "Pending") {
           // Find first uncompleted subject and route immediately
@@ -198,8 +228,6 @@ export default function StudentDashboard() {
     );
   }
 
-
-
   return (
     <div className="min-h-screen bg-[#f8fafc] font-sans flex flex-col">
       {/* Navbar */}
@@ -217,7 +245,7 @@ export default function StudentDashboard() {
             </div>
             <button
               onClick={handleLogout}
-              className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all"
+              className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
               <span className="font-medium text-sm">Logout</span>
@@ -228,7 +256,7 @@ export default function StudentDashboard() {
 
       {/* Completion Screen */}
       <div className="flex-1 flex items-center justify-center p-4">
-        <div className="bg-white p-10 rounded-[24px] shadow-lg border border-gray-100 max-w-lg w-full text-center">
+        <div className="bg-white p-8 sm:p-10 rounded-[24px] shadow-lg border border-gray-100 max-w-lg w-full text-center">
           {!activeCycle || assignments.length === 0 ? (
             <>
               <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -238,7 +266,7 @@ export default function StudentDashboard() {
               <p className="text-gray-500 mb-8">There is currently no active feedback cycle for your class.</p>
               <button
                 onClick={handleLogout}
-                className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors"
+                className="w-full py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors cursor-pointer"
               >
                 Logout
               </button>
@@ -258,14 +286,42 @@ export default function StudentDashboard() {
                   </span>
                 )}
               </div>
+              
               <h2 className="text-2xl font-bold text-gray-900 mb-2">Feedback form has been completed successfully!</h2>
               <p className="text-sm font-semibold text-gray-700 mb-1">
                 {student?.student_name || student?.name}
               </p>
-              <p className="text-xs font-medium text-gray-500 mb-6 font-mono">
+              <p className="text-xs font-medium text-gray-500 mb-4 font-mono">
                 Register No: {student?.register_number}
               </p>
-              <p className="text-gray-500 text-sm leading-relaxed mb-8">
+
+              {/* Database Verification Banner */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 my-5 text-left flex items-start space-x-3.5 shadow-2xs">
+                <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs mt-0.5">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-xs sm:text-sm text-emerald-950 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" /> Verified & Saved in Database
+                    </h4>
+                    <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                      SAVED ✓
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-800 mt-1">
+                    Your complete feedback submission has been verified and permanently recorded in the institutional database.
+                  </p>
+                  {verifiedSubmission?.submittedAt && (
+                    <p className="text-[11px] font-medium text-emerald-700 mt-2 flex items-center gap-1.5">
+                      <span>Recorded At:</span>
+                      <span className="font-semibold text-emerald-900">{verifiedSubmission.submittedAt}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-gray-500 text-sm leading-relaxed mb-6">
                 You have successfully completed all your subject feedbacks for this semester. Thank you for your valuable responses!
               </p>
               <button

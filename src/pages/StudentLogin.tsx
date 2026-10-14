@@ -24,8 +24,8 @@ export default function StudentLogin() {
       const { data, error: fetchError } = await supabase
         .from('students')
         .select('*')
-        .eq('register_number', registerNumber.trim())
-        .single();
+        .ilike('register_number', registerNumber.trim())
+        .maybeSingle();
 
       if (fetchError || !data) {
         setError('Invalid Register Number');
