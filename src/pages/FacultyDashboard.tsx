@@ -697,16 +697,16 @@ export default function FacultyDashboard() {
     
     let rowsHtml = '';
     for (let i = 0; i < maxRows; i++) {
-      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Department: '' };
-      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Department: '' };
+      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Submitted: '' };
+      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Status: '' };
       rowsHtml += `
         <tr>
           <td>${comp.Register_Number}</td>
           <td>${comp.Student_Name}</td>
-          <td>${comp.Department}</td>
+          <td>${comp.Submitted || ''}</td>
           <td>${pend.Register_Number}</td>
           <td>${pend.Student_Name}</td>
-          <td>${pend.Department}</td>
+          <td>${pend.Status || ''}</td>
         </tr>
       `;
     }
@@ -725,10 +725,10 @@ export default function FacultyDashboard() {
           <tr>
             <th style="border: 1px solid black; padding: 8px;">Register number</th>
             <th style="border: 1px solid black; padding: 8px;">Name</th>
-            <th style="border: 1px solid black; padding: 8px;">Department</th>
+            <th style="border: 1px solid black; padding: 8px;">Submitted At</th>
             <th style="border: 1px solid black; padding: 8px;">Register number</th>
             <th style="border: 1px solid black; padding: 8px;">Name</th>
-            <th style="border: 1px solid black; padding: 8px;">Department</th>
+            <th style="border: 1px solid black; padding: 8px;">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -764,18 +764,18 @@ export default function FacultyDashboard() {
     const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
     data.push({ A: `${department?.department_name || 'Department'} — Year ${selectedYear} Student Feedback Status` });
     data.push({ A: 'Completed students', B: '', C: '', D: 'Pending students', E: '', F: '' });
-    data.push({ A: 'Register number', B: 'Name', C: 'Department', D: 'Register number', E: 'Name', F: 'Department' });
+    data.push({ A: 'Register number', B: 'Name', C: 'Submitted At', D: 'Register number', E: 'Name', F: 'Status' });
     
     for (let i = 0; i < maxRows; i++) {
-      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Department: '' };
-      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Department: '' };
+      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Submitted: '' };
+      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Status: '' };
       data.push({
         A: comp.Register_Number,
         B: comp.Student_Name,
-        C: comp.Department,
+        C: comp.Submitted || '',
         D: pend.Register_Number,
         E: pend.Student_Name,
-        F: pend.Department
+        F: pend.Status || ''
       });
     }
 
@@ -1123,8 +1123,6 @@ export default function FacultyDashboard() {
                             <th className="px-3 py-3 text-center w-10">#</th>
                             <th className="px-4 py-3">Reg. No</th>
                             <th className="px-5 py-3">Student Name</th>
-                            <th className="px-4 py-3">Department</th>
-                            <th className="px-3 py-3 text-center">Sec</th>
                             <th className="px-5 py-3">Submitted At</th>
                           </tr>
                         </thead>
@@ -1138,20 +1136,12 @@ export default function FacultyDashboard() {
                                 </span>
                               </td>
                               <td className="px-5 py-3.5 font-semibold text-gray-800">{s.Student_Name}</td>
-                              <td className="px-4 py-3.5">
-                                <span className="inline-block text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                                  {s.Department || department?.department_name}
-                                </span>
-                              </td>
-                              <td className="px-3 py-3.5 text-center font-semibold text-gray-600 text-xs">
-                                {s.Section}
-                              </td>
                               <td className="px-5 py-3.5 text-gray-500 text-xs font-medium">{s.Submitted}</td>
                             </tr>
                           ))}
                           {filteredCompleted.length === 0 && (
                             <tr>
-                              <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                              <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
                                 {studentSearchQuery ? `No completed students matching "${studentSearchQuery}"` : 'No completed students for this cycle'}
                               </td>
                             </tr>
@@ -1179,8 +1169,6 @@ export default function FacultyDashboard() {
                             <th className="px-3 py-3 text-center w-10">#</th>
                             <th className="px-4 py-3">Reg. No</th>
                             <th className="px-5 py-3">Student Name</th>
-                            <th className="px-4 py-3">Department</th>
-                            <th className="px-3 py-3 text-center">Sec</th>
                             <th className="px-4 py-3 text-center">Status</th>
                           </tr>
                         </thead>
@@ -1194,14 +1182,6 @@ export default function FacultyDashboard() {
                                 </span>
                               </td>
                               <td className="px-5 py-3.5 font-semibold text-gray-800">{s.Student_Name}</td>
-                              <td className="px-4 py-3.5">
-                                <span className="inline-block text-[11px] font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
-                                  {s.Department || department?.department_name}
-                                </span>
-                              </td>
-                              <td className="px-3 py-3.5 text-center font-semibold text-gray-600 text-xs">
-                                {s.Section}
-                              </td>
                               <td className="px-4 py-3.5 text-center">
                                 <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-md text-xs font-bold uppercase">
                                   {s.Status}
@@ -1211,7 +1191,7 @@ export default function FacultyDashboard() {
                           ))}
                           {filteredPending.length === 0 && (
                             <tr>
-                              <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                              <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
                                 {studentSearchQuery ? `No pending students matching "${studentSearchQuery}"` : 'All students completed!'}
                               </td>
                             </tr>
