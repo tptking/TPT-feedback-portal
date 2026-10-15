@@ -58,8 +58,21 @@ export default function StudentDashboard() {
         console.error('Error fetching cycles:', cycleError);
       }
       
-      const cycle = cycles && cycles.length > 0 ? cycles[0] : null;
+      const cleanStudentSection = studentInfo.section ? studentInfo.section.trim().toUpperCase() : '';
+      const cycle = cycles && cycles.length > 0 ? (cycles.find((c: any) => {
+        const semMatch = !c.semester || c.semester === studentInfo.semester;
+        const cycleSec = c.section ? c.section.trim().toUpperCase() : '';
+        const secMatch = !cycleSec || cycleSec === cleanStudentSection;
+        return semMatch && secMatch;
+      }) ?? null) : null;
       setActiveCycle(cycle);
+
+      // Fetch active questions count to ensure complete answer sets
+      const { count: activeQuestionsCount } = await supabase
+        .from('feedback_questions')
+        .select('*', { count: 'exact', head: true })
+        .eq('active', true);
+      const expectedAnswersCount = activeQuestionsCount && activeQuestionsCount > 0 ? activeQuestionsCount : 10;
 
       // 3. Fetch Faculty Subject Assignments for this student's exact criteria
       const { data: fsaData, error: fsaError } = await supabase
@@ -121,7 +134,7 @@ export default function StudentDashboard() {
               ansCounts.set(a.response_id, (ansCounts.get(a.response_id) || 0) + 1);
             });
             userResponses.forEach((r: any) => {
-              if ((ansCounts.get(r.id) || 0) > 0) {
+              if ((ansCounts.get(r.id) || 0) >= expectedAnswersCount) {
                 submittedSet.add(`${r.subject_id}-${r.faculty_id}`);
               }
             });
@@ -162,10 +175,13 @@ export default function StudentDashboard() {
           submittedSet.has(`${a.subject_id}-${a.faculty_id}`)
         );
 
+        // isFeedbackSaved is true only when every required assignment is in submittedSet
+        // (which requires at least one answer row per response — see line ~124).
+        // The raw userResponses.length check is intentionally excluded: response rows without
+        // answers must never count as a completed submission.
         const isFeedbackSaved =
           isEveryAssignmentSubmitted ||
           (validAssignments.length > 0 && submittedSet.size >= validAssignments.length) ||
-          (userResponses && userResponses.length >= validAssignments.length && userResponses.length > 0) ||
           (userResponses && userResponses.length > 0 && !groupedAssignments.some((a: any) => !a.isSubmitted));
 
         const status = isFeedbackSaved

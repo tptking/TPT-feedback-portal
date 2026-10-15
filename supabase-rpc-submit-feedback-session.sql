@@ -1,21 +1,12 @@
 -- ==============================================================================
--- Migration: Atomic Student Feedback Session Submission RPC
--- File: supabase-rpc-submit-feedback-session.sql
--- Description:
---   1. Provides an atomic transaction RPC `submit_feedback_session` that:
---      - Validates student existence, active status, and register number.
---      - Validates that the active feedback cycle belongs to the student's department and year.
---      - Validates all assigned courses and faculty members for the student's exact
---        semester and section, preventing cross-section mixing.
---      - Validates that all questions per evaluation are answered with valid ratings (1-5).
---      - Atomically commits all responses and answers in a single PostgreSQL transaction.
---      - Provides idempotent double-click and retry safety without duplicate key errors.
---   2. SECURITY POLICY NOTE:
---      - NO unrestricted client DELETE policies are created. Anonymous clients are
---        never permitted to delete feedback records. Rollbacks are handled strictly
---        inside the database transaction boundary.
+-- DEPRECATED FILE - DO NOT RUN DIRECTLY IN PRODUCTION
+-- ==============================================================================
+-- WARNING: This file is kept only for backwards compatibility.
+-- The authoritative, active version is located in:
+--   supabase/migrations/20261014000000_atomic_feedback_submission.sql
 --
 -- DO NOT EXECUTE IN PRODUCTION WITHOUT EXPLICIT USER APPROVAL.
+-- All database updates must be applied via Supabase migrations.
 -- ==============================================================================
 
 -- 1. Create or replace the atomic submission function
@@ -48,7 +39,23 @@ DECLARE
     v_existing_answers_count INTEGER;
     v_required_assignments_count INTEGER;
     v_evaluations_count INTEGER;
+    v_active_questions_count INTEGER;
 BEGIN
+    -- 0. Concurrency Protection: Acquire transaction-level advisory lock scoped to this student and cycle.
+    -- Ensures simultaneous duplicate requests (e.g., rapid double-clicks) serialize cleanly without duplicate key errors;
+    -- the second transaction waits and then smoothly returns the idempotent success response.
+    PERFORM pg_advisory_xact_lock(hashtext(p_student_id::text || ':' || p_feedback_cycle_id::text));
+
+    -- Determine active questions count dynamically
+    SELECT COUNT(*)
+    INTO v_active_questions_count
+    FROM feedback_questions
+    WHERE active = true;
+
+    IF v_active_questions_count = 0 THEN
+        v_active_questions_count := 10;
+    END IF;
+
     -- 1. Validate Student existence, register number, and active status
     SELECT id, register_number, department_id, batch_id, year, semester, section, active
     INTO v_student
@@ -161,7 +168,7 @@ BEGIN
       AND r.feedback_cycle_id = p_feedback_cycle_id;
 
     -- If all responses and answers already exist, return idempotency success
-    IF v_existing_responses_count >= v_evaluations_count AND v_existing_answers_count >= (v_evaluations_count * 10) THEN
+    IF v_existing_responses_count >= v_evaluations_count AND v_existing_answers_count >= (v_evaluations_count * v_active_questions_count) THEN
         RETURN jsonb_build_object(
             'success', true,
             'already_submitted', true,
@@ -171,13 +178,13 @@ BEGIN
 
     -- If orphaned partial responses exist from an interrupted legacy/broken attempt, clean them up internally
     -- (Executed within trusted SECURITY DEFINER context; never exposed to anonymous client DELETE calls)
-    IF v_existing_responses_count > 0 AND v_existing_answers_count < (v_evaluations_count * 10) THEN
+    IF v_existing_responses_count > 0 AND v_existing_answers_count < (v_evaluations_count * v_active_questions_count) THEN
         DELETE FROM feedback_responses
         WHERE student_id = p_student_id
           AND feedback_cycle_id = p_feedback_cycle_id;
     END IF;
 
-    -- 6. Atomically process and insert each evaluation and its 10 answers
+    -- 6. Atomically process and insert each evaluation and its answers
     FOR v_eval IN SELECT * FROM jsonb_array_elements(p_evaluations)
     LOOP
         v_subject_id := (v_eval->>'subject_id')::UUID;
@@ -202,9 +209,9 @@ BEGIN
                 v_subject_id, v_faculty_id, p_register_number, COALESCE(v_student.section, 'N/A');
         END IF;
 
-        -- Verify exactly 10 answered questions per evaluation
-        IF jsonb_array_length(v_eval->'answers') <> 10 THEN
-            RAISE EXCEPTION 'Evaluation for subject % must have exactly 10 answered questions.', v_subject_id;
+        -- Verify all active questions answered per evaluation
+        IF jsonb_array_length(v_eval->'answers') <> v_active_questions_count THEN
+            RAISE EXCEPTION 'Evaluation for subject % must have exactly % answered questions.', v_subject_id, v_active_questions_count;
         END IF;
 
         -- Insert response row
@@ -229,7 +236,7 @@ BEGIN
 
         v_inserted_responses := v_inserted_responses + 1;
 
-        -- Insert all 10 answers for this evaluation
+        -- Insert all answers for this evaluation
         FOR v_ans IN SELECT * FROM jsonb_array_elements(v_eval->'answers')
         LOOP
             v_question_id := (v_ans->>'question_id')::UUID;
