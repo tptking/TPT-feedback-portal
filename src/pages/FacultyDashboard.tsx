@@ -185,8 +185,8 @@ export default function FacultyDashboard() {
         if (asgsError) throw new Error(`Failed to load course assignments: ${asgsError.message}`);
         setAssignments(asgs || []);
 
-        // Fetch Answers for those responses (detailed analytics)
-        if (forceRefreshAnswers || activeTabRef.current === 'results') {
+        // Fetch Answers for those responses (detailed analytics & completion verification)
+        if (forceRefreshAnswers || activeTabRef.current === 'results' || activeTabRef.current === 'status') {
           setLoadingAnswers(true);
           const allAnswers = await fetchAnswersForResponses(allResps);
           setAnswers(allAnswers);
@@ -316,9 +316,9 @@ export default function FacultyDashboard() {
     };
   }, [initDashboard, pollResponsesBackground]);
 
-  // When user switches to 'results' tab or when new responses arrive while on 'results' tab, ensure answers are loaded/synchronized
+  // When user switches to 'results' or 'status' tab or when new responses arrive, ensure answers are loaded/synchronized
   useEffect(() => {
-    if (activeTab === 'results' && responses.length > 0 && !loadingAnswers) {
+    if ((activeTab === 'results' || activeTab === 'status') && responses.length > 0 && !loadingAnswers) {
       // If answers have never been loaded or if responses increased while viewing results
       const existingRespIds = new Set(answers.map((a: any) => a.response_id));
       const hasMissingAnswers = responses.some((r: any) => !existingRespIds.has(r.id));
@@ -361,10 +361,23 @@ export default function FacultyDashboard() {
   const toggleCycle = async () => {
     if (!activeCycle) return;
     const newStatus = !activeCycle.enabled;
-    await supabase
+    if (!newStatus) {
+      const confirmed = window.confirm(
+        'Are you sure you want to disable this feedback cycle? Active student sessions will not be able to submit while it is disabled.'
+      );
+      if (!confirmed) return;
+    }
+    const { error } = await supabase
       .from('feedback_cycles')
       .update({ enabled: newStatus })
       .eq('id', activeCycle.id);
+
+    if (error) {
+      console.error('Failed to update feedback cycle status:', error);
+      alert(`Could not update feedback cycle: ${error.message}`);
+      return;
+    }
+
     setAllCycles(prev => prev.map(c => c.id === activeCycle.id ? { ...c, enabled: newStatus } : c));
   };
 
@@ -374,15 +387,22 @@ export default function FacultyDashboard() {
 
     try {
       // Update Subject
-      await supabase
+      const { error } = await supabase
         .from('subjects')
         .update({ subject_name: editModal.subject_name, course_code: editModal.course_code })
         .eq('id', editModal.subject_id);
 
+      if (error) {
+        console.error('Error saving subject edits:', error);
+        alert(`Failed to save subject changes: ${error.message}`);
+        return;
+      }
+
       setEditModal(null);
       await initDashboard(); // Refresh data
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving edits', err);
+      alert(`Error saving edits: ${err?.message || 'Unknown error'}`);
     }
   };
 
@@ -580,18 +600,33 @@ export default function FacultyDashboard() {
 
     const overallPercentage = totalMaxMarks > 0 ? ((totalObtainedMarks / totalMaxMarks) * 100).toFixed(2) : "0.00";
 
+
+    // Pre-calculate answer counts per response in O(answers) to verify answer existence without N+1 queries
+    const expectedAnswersPerResponse = totalQuestions > 0 ? totalQuestions : 10;
+    const ansCountByRespId = new Map<string, number>();
+    answers.forEach((a: any) => {
+      ansCountByRespId.set(a.response_id, (ansCountByRespId.get(a.response_id) || 0) + 1);
+    });
+
+    // A student is "completed" only when every required faculty-subject evaluation
+    // has a response row committed WITH all required answers for this cycle. Partial/orphaned submissions do not count.
     let fullyCompletedCount = 0;
     filteredStudents.forEach(s => {
       const studentAssignments = filteredAssignments.filter(
         a => a.active === true && a.semester === s.semester && matchesSection(a.section, s.section)
       );
       const requiredCount = studentAssignments.length;
+      if (requiredCount === 0) return; // no assignments configured for this student
       const sResponses = filteredResponses.filter(r => r.student_id === s.id);
-      const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
-      const isStudentComplete = requiredCount > 0 ? completedSet.size >= requiredCount : sResponses.length > 0;
-      if (isStudentComplete) {
-        fullyCompletedCount++;
-      }
+      const sCompletedSet = new Set(
+        sResponses
+          .filter(r => (ansCountByRespId.get(r.id) || 0) >= expectedAnswersPerResponse)
+          .map(r => `${r.subject_id}-${r.faculty_id}`)
+      );
+      const isFullyDone = studentAssignments.every(
+        a => sCompletedSet.has(`${a.subject_id}-${a.faculty_id}`)
+      );
+      if (isFullyDone) fullyCompletedCount++;
     });
 
     const completedStudents = fullyCompletedCount;
@@ -608,21 +643,36 @@ export default function FacultyDashboard() {
     const completed: any[] = [];
     const pending: any[] = [];
 
+    const activeQuestions = questions.filter(q => q.active !== false);
+    const expectedAnswersPerResponse = activeQuestions.length > 0 ? activeQuestions.length : 10;
+    const ansCountByRespId = new Map<string, number>();
+    answers.forEach((a: any) => {
+      ansCountByRespId.set(a.response_id, (ansCountByRespId.get(a.response_id) || 0) + 1);
+    });
+
     filteredStudents.forEach(s => {
       const studentAssignments = filteredAssignments.filter(
         a => a.active === true && a.semester === s.semester && matchesSection(a.section, s.section)
       );
       const requiredCount = studentAssignments.length;
       const sResponses = filteredResponses.filter(r => r.student_id === s.id);
-      const completedSet = new Set(sResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
-      const completedCount = completedSet.size;
+      const completedResponses = sResponses.filter(
+        r => (ansCountByRespId.get(r.id) || 0) >= expectedAnswersPerResponse
+      );
+      const completedSet = new Set(completedResponses.map(r => `${r.subject_id}-${r.faculty_id}`));
+      const completedCount = studentAssignments.filter(
+        a => completedSet.has(`${a.subject_id}-${a.faculty_id}`)
+      ).length;
 
       const completionPercentage =
         requiredCount > 0
           ? Math.min(100, Math.round((completedCount / requiredCount) * 100))
           : 0;
 
-      const isCompleted = requiredCount > 0 ? completedCount >= requiredCount : sResponses.length > 0;
+      // A student is complete only when ALL required assignments have a response row AND all answers.
+      const isCompleted = requiredCount > 0 && studentAssignments.every(
+        a => completedSet.has(`${a.subject_id}-${a.faculty_id}`)
+      );
 
       if (isCompleted) {
         const latest = sResponses.reduce((a, b) => new Date(a.submitted_at) > new Date(b.submitted_at) ? a : b, sResponses[0]);

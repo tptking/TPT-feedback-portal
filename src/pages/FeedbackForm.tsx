@@ -1,3 +1,4 @@
+
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -162,14 +163,22 @@ export default function FeedbackForm() {
           return;
         }
 
-        // Scope cycle: prioritize matching semester and section if defined, else fallback to batch cycle
+        // Scope cycle: prioritize matching semester and section if defined.
+        // If nothing matches, do NOT silently fall back to cycles[0] — that could assign
+        // a Year 3 cycle to a Year 2 student. Surface a clear message instead.
         const cleanStudentSection = parsedStudent.section ? parsedStudent.section.trim().toUpperCase() : '';
         const cycle = cycles.find((c: any) => {
           const semMatch = !c.semester || c.semester === parsedStudent.semester;
           const cycleSec = c.section ? c.section.trim().toUpperCase() : '';
           const secMatch = !cycleSec || cycleSec === cleanStudentSection;
           return semMatch && secMatch;
-        }) || cycles[0];
+        }) ?? null;
+
+        if (!cycle) {
+          setEmptyStateMessage('There is currently no active feedback cycle matching your semester and class. Please contact the administrator.');
+          setLoading(false);
+          return;
+        }
 
         setActiveCycle(cycle);
 
@@ -315,12 +324,15 @@ export default function FeedbackForm() {
           });
         });
 
-        // If EVERY required evaluation has verified complete answers in the database, show completed screen
+        // isAlreadySubmitted is true only when verifiedSubmittedSet contains every required
+        // evaluation key. verifiedSubmittedSet entries are built by checking that each
+        // response has >= qs.length answers (line ~272), so this condition implicitly
+        // requires both response rows AND complete answer sets.
+        // The previous fallback conditions based on raw response-row counts are removed:
+        // response rows alone (without answers) must not be treated as a completed submission.
         const isAlreadySubmitted =
           evalList.length > 0 &&
-          (evalList.every(e => verifiedSubmittedSet.has(e.key)) ||
-            verifiedSubmittedSet.size >= evalList.length ||
-            (existingUserResponses && existingUserResponses.length >= evalList.length));
+          evalList.every(e => verifiedSubmittedSet.has(e.key));
 
         if (isAlreadySubmitted) {
           setSubmitted(true);
@@ -627,50 +639,89 @@ export default function FeedbackForm() {
       });
 
       if (rpcErr || !rpcData || rpcData.success !== true) {
-        console.warn("RPC returned error or timed out, performing recovery verification against database:", rpcErr || rpcData?.error);
-
-        // Safe timeout/network drop check: verify if the transaction was committed despite client network error
-        try {
-          const timeoutRecovery = await verifyStudentFeedbackCompletion({
-            studentId: verifiedStudent.id,
-            registerNumber: verifiedStudent.register_number,
-            feedbackCycleId: verifiedCycle.id,
-            departmentId: verifiedStudent.department_id,
-            year: verifiedStudent.year,
-            semester: verifiedStudent.semester,
-            section: verifiedStudent.section,
-            evaluations,
-            questionsCount: questions.length
-          });
-          if (timeoutRecovery) {
-            console.log('[Recovery Success] Submission was already committed in Supabase!');
-            setSubmitted(true);
-            try {
-              localStorage.removeItem(`tpt_feedback_draft_${verifiedStudent.id}_${verifiedCycle.id}`);
-              localStorage.removeItem(`tpt_feedback_draft_${student.id}_${activeCycle.id}`);
-            } catch {}
-            return;
+        // If there was a network error or missing response (e.g. timeout), perform recovery check against database
+        if (rpcErr || !rpcData) {
+          console.warn("RPC returned error or timed out, performing recovery verification against database:", rpcErr || rpcData?.error);
+          try {
+            const timeoutRecovery = await verifyStudentFeedbackCompletion({
+              studentId: verifiedStudent.id,
+              registerNumber: verifiedStudent.register_number,
+              feedbackCycleId: verifiedCycle.id,
+              departmentId: verifiedStudent.department_id,
+              year: verifiedStudent.year,
+              semester: verifiedStudent.semester,
+              section: verifiedStudent.section,
+              evaluations,
+              questionsCount: questions.length
+            });
+            if (timeoutRecovery) {
+              console.log('[Recovery Success] Submission was already committed in Supabase!');
+              setSubmitted(true);
+              try {
+                localStorage.removeItem(`tpt_feedback_draft_${verifiedStudent.id}_${verifiedCycle.id}`);
+                localStorage.removeItem(`tpt_feedback_draft_${student.id}_${activeCycle.id}`);
+              } catch (clearErr) {
+                console.warn('Could not clear draft after recovery:', clearErr);
+              }
+              return;
+            }
+          } catch (recoverCheckErr) {
+            console.warn('Recovery verification check failed:', recoverCheckErr);
           }
-        } catch (recoverCheckErr) {
-          console.warn('Recovery verification check failed:', recoverCheckErr);
         }
 
-        console.error(
-          "Feedback database submission failed:",
-          rpcErr || rpcData?.error
-        );
-
+        // Include the database-level error message when the RPC returns success:false
+        const dbMessage = rpcData?.error ? `Submission rejected: ${rpcData.error}` : null;
+        console.error('Feedback database submission failed:', rpcErr || rpcData?.error);
         setSubmissionError(
-          rpcData?.error || "Please try again. The feedback form was not saved in the database."
+          dbMessage ||
+          'Please try again. The feedback form was not saved in the database.'
         );
         window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       }
 
-      // 2. VERIFICATION CHECKS:
-      // Check A: Database submission — confirm feedback_responses and feedback_answers exist
-      // Check B: Website Completed status — re-fetch completion status using StudentDashboard logic
-      const isCompleted = await verifyStudentFeedbackCompletion({
+      // Validate the response count reported by the RPC when available.
+      // A count mismatch on a fresh submission (not already_submitted) indicates
+      // the RPC committed fewer evaluations than expected — stop and surface the error.
+      if (
+        !rpcData.already_submitted &&
+        typeof rpcData.responses_created === 'number' &&
+        rpcData.responses_created !== evaluations.length
+      ) {
+        console.error(
+          'RPC count mismatch: expected', evaluations.length,
+          'responses, RPC reported', rpcData.responses_created
+        );
+        setSubmissionError(
+          `Submission count mismatch: expected ${evaluations.length} evaluations, ` +
+          `database reported ${rpcData.responses_created}. Please contact the administrator.`
+        );
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+
+      // The RPC returned success:true — the PostgreSQL transaction has committed.
+      // Mark the student as submitted and clear the draft immediately.
+      // Do NOT block the success transition on a post-commit re-query: if the re-query
+      // fails (network drop, Supabase rate-limit, etc.) the data is still in the database.
+      setSubmitted(true);
+
+      try {
+        localStorage.removeItem(
+          `tpt_feedback_draft_${verifiedStudent.id}_${verifiedCycle.id}`
+        );
+        localStorage.removeItem(
+          `tpt_feedback_draft_${student.id}_${activeCycle.id}`
+        );
+      } catch (e) {
+        console.warn('Could not clear draft from localStorage:', e);
+      }
+
+      // Best-effort post-commit verification (non-blocking).
+      // Runs in the background after the success screen is already shown.
+      // A failure here does NOT change the submitted state because the RPC is authoritative.
+      verifyStudentFeedbackCompletion({
         studentId: verifiedStudent.id,
         registerNumber: verifiedStudent.register_number,
         feedbackCycleId: verifiedCycle.id,
@@ -680,37 +731,18 @@ export default function FeedbackForm() {
         section: verifiedStudent.section,
         evaluations,
         questionsCount: questions.length
+      }).then(isVerified => {
+        if (!isVerified) {
+          // Log for diagnostic purposes only. Data is already committed.
+          console.warn(
+            '[Post-commit verification] Could not confirm all records via re-query, ' +
+            'but RPC reported success. Transaction is committed in the database.'
+          );
+        }
+      }).catch(verifyErr => {
+        console.warn('[Post-commit verification] Re-query failed after successful commit:', verifyErr);
       });
 
-      if (!isCompleted) {
-        console.error(
-          "Feedback submission succeeded, but completion status could not be verified."
-        );
-
-        setSubmissionError(
-          "Your feedback was saved, but its completion status could not be verified. Please refresh and check your status."
-        );
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-      }
-
-      // 3. Update the UI only after both verification checks succeed
-      setSubmitted(true);
-
-      // Clear the draft only after successful saving and verification
-      try {
-        localStorage.removeItem(
-          `tpt_feedback_draft_${verifiedStudent.id}_${verifiedCycle.id}`
-        );
-        localStorage.removeItem(
-          `tpt_feedback_draft_${student.id}_${activeCycle.id}`
-        );
-      } catch (e) {
-        console.warn('Could not clear draft from localStorage', e);
-      }
-
-      // Refresh the student dashboard from persisted database data
-      await refreshStudentFeedbackStatus();
       window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (error: any) {
@@ -844,11 +876,6 @@ export default function FeedbackForm() {
       console.error('Unexpected error in verifyStudentFeedbackCompletion:', error);
       return false;
     }
-  };
-
-  const refreshStudentFeedbackStatus = async () => {
-    // Re-sync UI state with database confirmation
-    setSubmitted(true);
   };
 
   // Completion Screen (Issue 21)
