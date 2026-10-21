@@ -22,6 +22,13 @@ export default function FacultyDashboard() {
   const [responses, setResponses] = useState<any[]>([]);
   const [answers, setAnswers] = useState<any[]>([]);
   const [selectedYear, setSelectedYear] = useState<number>(3);
+  const [selectedSection, setSelectedSection] = useState<string>('A');
+
+  const isMechanicalSS = Boolean(
+    department?.department_code === 'ME-SS' ||
+    (department?.department_name?.toLowerCase().includes('mechanical') &&
+     department?.department_name?.toLowerCase().includes('ss'))
+  );
 
   const activeCycle = allCycles.find(c => c.year === selectedYear);
 
@@ -520,10 +527,23 @@ export default function FacultyDashboard() {
   };
 
   const getFilteredData = () => {
-    const filteredStudents = students.filter(s => s.year === selectedYear);
+    let filteredStudents = students.filter(s => s.year === selectedYear);
+    let filteredAssignments = assignments.filter(a => a.year === selectedYear);
+
+    if (isMechanicalSS && selectedSection !== 'ALL') {
+      filteredStudents = filteredStudents.filter(
+        s => (s.section || '').trim().toUpperCase() === selectedSection.toUpperCase()
+      );
+      filteredAssignments = filteredAssignments.filter(
+        a => matchesSection(a.section, selectedSection)
+      );
+    }
+
     const studentIds = new Set(filteredStudents.map(s => s.id));
-    const filteredResponses = responses.filter(r => studentIds.has(r.student_id) && activeCycle && r.feedback_cycle_id === activeCycle.id);
-    const filteredAssignments = assignments.filter(a => a.year === selectedYear);
+    const filteredResponses = responses.filter(
+      r => studentIds.has(r.student_id) && activeCycle && r.feedback_cycle_id === activeCycle.id
+    );
+
     return { filteredStudents, filteredResponses, filteredAssignments };
   };
 
@@ -764,7 +784,7 @@ export default function FacultyDashboard() {
     const html = `
       <div style="font-family: Arial, sans-serif; margin-bottom: 16px;">
         <h2>${department?.department_name || 'All Departments'} — Student Feedback Status</h2>
-        <p>Year: ${selectedYear} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}</p>
+        <p>Year: ${selectedYear} ${isMechanicalSS && selectedSection !== 'ALL' ? `| Section: ${selectedSection}` : ''} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}</p>
       </div>
       <table style="width: 100%; border-collapse: collapse;">
         <thead>
@@ -790,7 +810,8 @@ export default function FacultyDashboard() {
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Student Status</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px 12px; text-align: center; } th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3), th:nth-child(5), td:nth-child(5), th:nth-child(6), td:nth-child(6) { text-align: left; }</style></head><body>";
     const footer = "</body></html>";
     const content = header + html + footer;
-    const filename = `${(department?.department_name || 'Department').replace(/[^a-zA-Z0-9]/g, '_')}_Student_Status`;
+    const secSuffix = isMechanicalSS && selectedSection !== 'ALL' ? `_Sec_${selectedSection}` : '';
+    const filename = `${(department?.department_name || 'Department').replace(/[^a-zA-Z0-9]/g, '_')}_Year_${selectedYear}${secSuffix}_Student_Status`;
     
     // @ts-ignore
     if (window.htmlDocx && window.saveAs) {
@@ -812,7 +833,7 @@ export default function FacultyDashboard() {
   const exportStatusExcel = () => {
     const data: any[] = [];
     const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
-    data.push({ A: `${department?.department_name || 'Department'} — Year ${selectedYear} Student Feedback Status` });
+    data.push({ A: `${department?.department_name || 'Department'} — Year ${selectedYear}${isMechanicalSS && selectedSection !== 'ALL' ? ` (Section ${selectedSection})` : ''} Student Feedback Status` });
     data.push({ A: 'Completed students', B: '', C: '', D: 'Pending students', E: '', F: '' });
     data.push({ A: 'Register number', B: 'Name', C: 'Submitted At', D: 'Register number', E: 'Name', F: 'Status' });
     
@@ -917,6 +938,21 @@ export default function FacultyDashboard() {
                 <option value={3}>Third Year (III)</option>
               </select>
             </div>
+
+            {isMechanicalSS && (
+              <div className="flex items-center space-x-2 animate-fade-in">
+                <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Section:</span>
+                <select
+                  value={selectedSection}
+                  onChange={(e) => setSelectedSection(e.target.value)}
+                  className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#1E3A8A] focus:border-[#1E3A8A] p-2.5 outline-none font-semibold shadow-sm cursor-pointer"
+                >
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="ALL">All Sections</option>
+                </select>
+              </div>
+            )}
           </div>
         </header>
 
@@ -946,7 +982,7 @@ export default function FacultyDashboard() {
                 <div>
                   <h2 className="text-xl font-bold text-gray-900">Overall Feedback Results</h2>
                   <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-                    Live department overview and analytics for {department?.department_name}.
+                    Live department overview and analytics for {department?.department_name}{isMechanicalSS && selectedSection !== 'ALL' ? ` — Section ${selectedSection}` : ''}.
                   </p>
                 </div>
                 <div className="flex items-center space-x-3">
@@ -1150,6 +1186,14 @@ export default function FacultyDashboard() {
                   <span className="font-bold text-[#1E3A8A]">{department?.department_name}</span>
                   <span className="text-gray-400">•</span>
                   <span>Year {selectedYear}</span>
+                  {isMechanicalSS && (
+                    <>
+                      <span className="text-gray-400">•</span>
+                      <span className="font-bold text-indigo-700">
+                        {selectedSection === 'ALL' ? 'All Sections' : `Section ${selectedSection}`}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1163,7 +1207,7 @@ export default function FacultyDashboard() {
                         Completed Students — {department?.department_name} ({filteredCompleted.length})
                       </h3>
                       <span className="text-xs font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
-                        Year {selectedYear}
+                        Year {selectedYear}{isMechanicalSS && selectedSection !== 'ALL' ? ` • Sec ${selectedSection}` : ''}
                       </span>
                     </div>
                     <div className="overflow-x-auto max-h-[550px] overflow-y-auto">
@@ -1209,7 +1253,7 @@ export default function FacultyDashboard() {
                         Pending Students — {department?.department_name} ({filteredPending.length})
                       </h3>
                       <span className="text-xs font-bold text-amber-700 bg-amber-100/80 px-2.5 py-1 rounded-full">
-                        Year {selectedYear}
+                        Year {selectedYear}{isMechanicalSS && selectedSection !== 'ALL' ? ` • Sec ${selectedSection}` : ''}
                       </span>
                     </div>
                     <div className="overflow-x-auto max-h-[550px] overflow-y-auto">
