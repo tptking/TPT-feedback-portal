@@ -159,7 +159,8 @@ const sectionA_courses = [
   { code: '240-025415', name: 'Industrial Engineering and Management', facs: ['G. Saravanan', 'R. Ayanar'] },
   { code: '240-025501A', name: 'Refrigeration and Air-Conditioning', facs: ['P. Gopal', 'S. Ashok Saravanan'] },
   { code: '240-025416', name: 'Maintenance, Repairs & Service', facs: ['S. Prakash', 'R. Ayanar', 'S. Ashok Saravanan'] },
-  { code: '240-025502A', name: 'Process Automation', facs: ['G. Saravanan', 'K. Karthick'] }
+  { code: '240-025502A', name: 'Process Automation', facs: ['G. Saravanan', 'K. Karthick'] },
+  { code: '240-025108', name: 'Innovation and Startup', facs: ['T. Ponnusamy'] }
 ];
 
 const sectionB_courses = [
