@@ -161,10 +161,10 @@ const sectionA_courses = [
 const sectionB_courses = [
   { code: '240-023402', name: 'Manufacturing Process', facs: ['S. Ashok Saravanan'] },
   { code: '240-023403', name: 'Strength of Materials', facs: ['S. Manikandan', 'P. Gopal'] },
-  { code: '240-023404', name: 'Workshop Practices', facs: ['S. Manikandan', 'L. Kannan', 'R. Palanimathi'] },
-  { code: '240-023405', name: 'Industrial Drives and Control', facs: ['S. Prakash', 'P. Gopal'] },
-  { code: '240-023406', name: 'Production Drawing and Modeling', facs: ['S. Ashok Saravanan', 'S. Srinivasan', 'S. R. Sandhiya'] },
-  { code: '240-023407', name: 'Machine Tool Technology', facs: ['S. Manikandan', 'P. Gopal'] }
+  { code: '240-023404', name: 'Workshop Practices', facs: ['S. Manikandan', 'L. Kannan'] },
+  { code: '240-023405', name: 'Industrial Drives and Control', facs: ['R. Palanimathi', 'S. Prakash'] },
+  { code: '240-023406', name: 'Production Drawing and Modeling', facs: ['P. Gopal', 'S. Ashok Saravanan'] },
+  { code: '240-023407', name: 'Machine Tool Technology', facs: ['S. Srinivasan', 'S. R. Sandhiya'] }
 ];
 
 function parseStudents(raw, section) {
