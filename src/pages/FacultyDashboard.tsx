@@ -651,8 +651,11 @@ export default function FacultyDashboard() {
 
     const completedStudents = fullyCompletedCount;
     const totalDeptStudents = filteredStudents.length;
+    const completionPercentage = totalDeptStudents > 0
+      ? ((completedStudents / totalDeptStudents) * 100).toFixed(2)
+      : "0.00";
 
-    return { groupedCourseStats, overallPercentage, completedStudents, totalDeptStudents, totalQuestions };
+    return { groupedCourseStats, overallPercentage, completionPercentage, completedStudents, totalDeptStudents, totalQuestions };
   };
 
   const getStudentStatusData = () => {
@@ -1014,8 +1017,8 @@ export default function FacultyDashboard() {
               {/* Summary Cards */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
                 <div className="bg-white p-6 rounded-[20px] shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Overall Feedback</p>
-                  <p className="text-3xl font-black text-[#1E3A8A]">{resultData.overallPercentage}%</p>
+                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Completed (%)</p>
+                  <p className="text-3xl font-black text-[#1E3A8A]">{resultData.completionPercentage}%</p>
                 </div>
                 <div className="bg-white p-6 rounded-[20px] shadow-sm border border-gray-100 flex flex-col items-center text-center">
                   <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Total Students</p>
