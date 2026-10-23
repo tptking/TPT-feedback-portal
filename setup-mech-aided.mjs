@@ -269,7 +269,40 @@ async function main() {
     console.log("Existing Year 3 feedback cycle for ME-AIDED:", cycleYear3Id);
   }
 
-  // 4. Faculty Creation (Auth + DB)
+  // 4. Ensure Department Admin Login (mechaided / MechAided@2026)
+  const adminEmail = 'mechaided@tpt.edu.in';
+  const { data: usersData } = await supabase.auth.admin.listUsers();
+  let adminAuth = usersData?.users?.find(u => u.email === adminEmail);
+  if (!adminAuth) {
+    const { data: created, error } = await supabase.auth.admin.createUser({
+      email: adminEmail,
+      password: 'MechAided@2026',
+      email_confirm: true
+    });
+    if (error) console.error("Error creating admin auth:", error.message);
+    else adminAuth = created.user;
+  } else {
+    await supabase.auth.admin.updateUserById(adminAuth.id, { password: 'MechAided@2026' });
+  }
+
+  // Upsert mechaided in faculty table
+  const adminFacCheck = await client.query(
+    "SELECT id FROM faculty WHERE department_id = $1 AND username = 'mechaided'",
+    [aidedDeptId]
+  );
+  if (adminFacCheck.rows.length === 0) {
+    await client.query(
+      "INSERT INTO faculty (department_id, faculty_name, username, auth_user_id, active) VALUES ($1, 'Mechanical Engineering (Aided) Admin', 'mechaided', $2, true)",
+      [aidedDeptId, adminAuth?.id || null]
+    );
+  } else {
+    await client.query(
+      "UPDATE faculty SET auth_user_id = $1, active = true WHERE id = $2",
+      [adminAuth?.id || null, adminFacCheck.rows[0].id]
+    );
+  }
+
+  // 5. Faculty Records for Allocation (No individual login credentials)
   const facultyMembers = [
     { name: 'Dr. A. Kannan', username: 'akannan' },
     { name: 'Dr. B. Selvakumar', username: 'bselvakumar' },
@@ -283,34 +316,7 @@ async function main() {
   const facMap = new Map(); // name -> id
 
   for (const fac of facultyMembers) {
-    const email = `${fac.username}@tpt.edu.in`;
-    const password = 'Faculty@123';
-
-    // 1) Auth User
-    let authUserId = null;
-    const { data: usersData } = await supabase.auth.admin.listUsers();
-    let authUser = usersData?.users?.find(u => u.email === email);
-
-    if (!authUser) {
-      const { data: created, error } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true
-      });
-      if (error) {
-        console.warn(`Auth user creation note for ${email}:`, error.message);
-      } else {
-        authUser = created.user;
-        console.log(`Created auth user for ${email}`);
-      }
-    } else {
-      await supabase.auth.admin.updateUserById(authUser.id, { password });
-      console.log(`Verified auth user for ${email}`);
-    }
-
-    if (authUser) authUserId = authUser.id;
-
-    // 2) Faculty DB Record
+    // Upsert into faculty table without individual auth_user_id
     const facCheck = await client.query(
       "SELECT id FROM faculty WHERE department_id = $1 AND username = $2",
       [aidedDeptId, fac.username]
@@ -319,16 +325,16 @@ async function main() {
     let facId;
     if (facCheck.rows.length === 0) {
       const ins = await client.query(
-        "INSERT INTO faculty (department_id, faculty_name, username, auth_user_id, active) VALUES ($1, $2, $3, $4, true) RETURNING id",
-        [aidedDeptId, fac.name, fac.username, authUserId]
+        "INSERT INTO faculty (department_id, faculty_name, username, auth_user_id, active) VALUES ($1, $2, $3, NULL, true) RETURNING id",
+        [aidedDeptId, fac.name, fac.username]
       );
       facId = ins.rows[0].id;
       console.log(`Inserted faculty record for ${fac.name} (${fac.username}): ${facId}`);
     } else {
       facId = facCheck.rows[0].id;
       await client.query(
-        "UPDATE faculty SET faculty_name = $1, auth_user_id = $2, active = true WHERE id = $3",
-        [fac.name, authUserId, facId]
+        "UPDATE faculty SET faculty_name = $1, auth_user_id = NULL, active = true WHERE id = $2",
+        [fac.name, facId]
       );
       console.log(`Updated faculty record for ${fac.name} (${fac.username}): ${facId}`);
     }
