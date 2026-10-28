@@ -29,8 +29,7 @@ const year3_courses = [
   { code: '240-045501A', name: 'Tool Design', facs: ['K. Sreenivasan'] },
   { code: '240-025416', name: 'Maintenance, Repairs and Service', facs: ['K. Jonathan', 'S. V. Giri Prasad'] },
   { code: '240-045502A', name: 'Process Planning, Cost Estimation and SPC', facs: ['K. Sreenivasan', 'M. Dhamotharan'] },
-  { code: '240-045108', name: 'Innovation and Startup', facs: ['K. Sreenivasan', 'M. Dhamotharan'] },
-  { code: '240-045701', name: 'Industrial Training/Internship', facs: ['K. Sreenivasan', 'M. Dhamotharan'] }
+  { code: '240-045108', name: 'Innovation and Startup', facs: ['K. Sreenivasan', 'M. Dhamotharan'] }
 ];
 
 const year2_students_raw = `
