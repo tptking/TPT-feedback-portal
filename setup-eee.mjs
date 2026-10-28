@@ -200,73 +200,50 @@ async function main() {
   if (dept.rows.length === 0) {
     await client.query(`
       INSERT INTO departments (id, department_name, department_code, active)
-      VALUES ($1, 'Electrical & Electronics Engineering (Aided)', 'EEE', true)
+      VALUES ($1, 'Electrical & Electronics Engineering (Aided)', 'EEE-AIDED', true)
     `, [eeeDeptId]);
     console.log("Created department: Electrical & Electronics Engineering (Aided) with ID:", eeeDeptId);
   } else {
     await client.query(`
-      UPDATE departments SET department_name = 'Electrical & Electronics Engineering (Aided)', department_code = 'EEE', active = true
+      UPDATE departments SET department_name = 'Electrical & Electronics Engineering (Aided)', department_code = 'EEE-AIDED', active = true
       WHERE id = $1
     `, [eeeDeptId]);
     console.log("Verified department: Electrical & Electronics Engineering (Aided)");
   }
 
-  // 2. Department Admin Auth Accounts & Faculty Admin Record (password: Eee@2026)
+  // 2. Department Admin Auth Account & Faculty Admin Record (Username: eeeaided, Password: EeeAided@2026)
   const { data: usersData } = await supabase.auth.admin.listUsers();
   
-  // eeedept@tpt.edu.in
-  let eeeDeptAuth = usersData?.users?.find(u => u.email === 'eeedept@tpt.edu.in');
-  if (!eeeDeptAuth) {
+  // eeeaided@tpt.edu.in
+  let eeeAidedAuth = usersData?.users?.find(u => u.email === 'eeeaided@tpt.edu.in');
+  if (!eeeAidedAuth) {
     const { data: created, error } = await supabase.auth.admin.createUser({
-      email: 'eeedept@tpt.edu.in',
-      password: 'Eee@2026',
+      email: 'eeeaided@tpt.edu.in',
+      password: 'EeeAided@2026',
       email_confirm: true
     });
-    if (error) console.error("Error creating eeedept auth:", error.message);
-    else eeeDeptAuth = created.user;
+    if (error) console.error("Error creating eeeaided auth:", error.message);
+    else eeeAidedAuth = created.user;
   } else {
-    await supabase.auth.admin.updateUserById(eeeDeptAuth.id, { password: 'Eee@2026' });
+    await supabase.auth.admin.updateUserById(eeeAidedAuth.id, { password: 'EeeAided@2026' });
   }
 
-  // eee@tpt.edu.in
-  let eeeAuth = usersData?.users?.find(u => u.email === 'eee@tpt.edu.in');
-  if (!eeeAuth) {
-    const { data: created, error } = await supabase.auth.admin.createUser({
-      email: 'eee@tpt.edu.in',
-      password: 'Eee@2026',
-      email_confirm: true
-    });
-    if (error) console.error("Error creating eee auth:", error.message);
-    else eeeAuth = created.user;
-  } else {
-    await supabase.auth.admin.updateUserById(eeeAuth.id, { password: 'Eee@2026' });
-  }
-
-  // Upsert faculty admin records
-  const adminFacCheck = await client.query("SELECT id FROM faculty WHERE department_id = $1 AND username = 'eeedept'", [eeeDeptId]);
+  // Upsert faculty admin record for eeeaided
+  const adminFacCheck = await client.query("SELECT id FROM faculty WHERE department_id = $1 AND username = 'eeeaided'", [eeeDeptId]);
   if (adminFacCheck.rows.length === 0) {
     await client.query(`
       INSERT INTO faculty (department_id, faculty_name, username, auth_user_id, active)
-      VALUES ($1, 'Electrical & Electronics Admin', 'eeedept', $2, true)
-    `, [eeeDeptId, eeeDeptAuth?.id || null]);
+      VALUES ($1, 'Electrical & Electronics Engineering (Aided) Admin', 'eeeaided', $2, true)
+    `, [eeeDeptId, eeeAidedAuth?.id || null]);
   } else {
     await client.query(`
-      UPDATE faculty SET auth_user_id = $1, active = true WHERE id = $2
-    `, [eeeDeptAuth?.id || null, adminFacCheck.rows[0].id]);
+      UPDATE faculty SET auth_user_id = $1, faculty_name = 'Electrical & Electronics Engineering (Aided) Admin', active = true WHERE id = $2
+    `, [eeeAidedAuth?.id || null, adminFacCheck.rows[0].id]);
   }
 
-  const eeeFacCheck = await client.query("SELECT id FROM faculty WHERE department_id = $1 AND username = 'eee'", [eeeDeptId]);
-  if (eeeFacCheck.rows.length === 0) {
-    await client.query(`
-      INSERT INTO faculty (department_id, faculty_name, username, auth_user_id, active)
-      VALUES ($1, 'Electrical & Electronics Admin', 'eee', $2, true)
-    `, [eeeDeptId, eeeAuth?.id || null]);
-  } else {
-    await client.query(`
-      UPDATE faculty SET auth_user_id = $1, active = true WHERE id = $2
-    `, [eeeAuth?.id || null, eeeFacCheck.rows[0].id]);
-  }
-  console.log("Department admin accounts verified: eeedept / eee (password: Eee@2026)");
+  // Remove old eee / eeedept faculty records
+  await client.query("DELETE FROM faculty WHERE department_id = $1 AND username IN ('eee', 'eeedept')", [eeeDeptId]);
+  console.log("Department admin account verified: eeeaided (password: EeeAided@2026)");
 
   // 3. Batches
   // Year 2 Batch: 2023-2026
