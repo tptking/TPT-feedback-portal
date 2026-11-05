@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, WidthType, AlignmentType, TextRun } from 'docx';
+import DownloadQuestionWiseReportButton from '../components/DownloadQuestionWiseReportButton';
+import { generateAndDownloadReportInBrowser } from '../services/questionWiseReportService';
 
 export default function FacultyDashboard() {
   const navigate = useNavigate();
@@ -35,6 +39,7 @@ export default function FacultyDashboard() {
   const [editModal, setEditModal] = useState<any>(null);
   const [loadingAnswers, setLoadingAnswers] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
 
   // Keep references to latest state to avoid stale React closures in background polling
   const facultyRef = useRef<any>(null);
@@ -413,31 +418,48 @@ export default function FacultyDashboard() {
     }
   };
 
-  // ----- EXPORT UTILS -----
+  const downloadAllReports = async () => {
+    if (!resultData || !resultData.groupedCourseStats || resultData.groupedCourseStats.length === 0) {
+      alert('No course results available to export.');
+      return;
+    }
+    try {
+      setDownloadingAll(true);
+      let count = 0;
+      for (const courseGrp of resultData.groupedCourseStats) {
+        for (const fac of courseGrp.faculties) {
+          if (fac.totalResponses > 0) {
+            const facultyDisplayName = getFacultyName(fac.faculty);
+            const courseEligibleStudents = getFilteredData().filteredStudents.filter(
+              (s: any) => s.semester === fac.semester && matchesSection(fac.section, s.section)
+            ).length || getFilteredData().filteredStudents.length;
 
-  const exportToWord = (htmlId: string, filename: string) => {
-    const el = document.getElementById(htmlId);
-    if (!el) return;
-    const html = el.outerHTML;
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 12px 16px; text-align: center; } th:nth-child(2), td:nth-child(2) { text-align: left; }</style></head><body>";
-    const footer = "</body></html>";
-    const content = header + html + footer;
-    
-    // @ts-ignore
-    if (window.htmlDocx && window.saveAs) {
-      // @ts-ignore
-      const converted = window.htmlDocx.asBlob(content);
-      // @ts-ignore
-      window.saveAs(converted, `${filename.replace(/[^a-zA-Z0-9]/g, '_')}.docx`);
-    } else {
-      // Fallback for non-mac browsers
-      const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(content);
-      const fileDownload = document.createElement("a");
-      document.body.appendChild(fileDownload);
-      fileDownload.href = source;
-      fileDownload.download = filename.replace(/[^a-zA-Z0-9]/g, '_') + '.doc';
-      fileDownload.click();
-      document.body.removeChild(fileDownload);
+            await generateAndDownloadReportInBrowser({
+              facultyId: fac.faculty_id,
+              subjectId: courseGrp.subject?.id || fac.subject_id,
+              cycleId: activeCycle?.id || '',
+              facultyName: facultyDisplayName,
+              subjectName: getSubjectName(courseGrp.subject),
+              courseCode: courseGrp.subject?.course_code || '',
+              departmentName: department?.department_name,
+              totalStrength: courseEligibleStudents,
+              appeared: fac.totalResponses,
+              cachedQStats: fac.qStats,
+              totalResponses: fac.totalResponses
+            });
+            count++;
+            await new Promise(res => setTimeout(res, 400));
+          }
+        }
+      }
+      if (count === 0) {
+        alert('No courses with submitted feedback found to generate reports.');
+      }
+    } catch (err: any) {
+      console.error('Batch report generation error:', err);
+      alert(err.message || 'Error generating assessment reports.');
+    } finally {
+      setDownloadingAll(false);
     }
   };
 
@@ -765,71 +787,110 @@ export default function FacultyDashboard() {
     s.Student_Name.toLowerCase().includes(studentSearchQuery.trim().toLowerCase())
   );
 
-  const exportStatusWord = () => {
-    const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
-    
-    let rowsHtml = '';
-    for (let i = 0; i < maxRows; i++) {
-      const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Submitted: '' };
-      const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Status: '' };
-      rowsHtml += `
-        <tr>
-          <td>${comp.Register_Number}</td>
-          <td>${comp.Student_Name}</td>
-          <td>${comp.Submitted || ''}</td>
-          <td>${pend.Register_Number}</td>
-          <td>${pend.Student_Name}</td>
-          <td>${pend.Status || ''}</td>
-        </tr>
-      `;
-    }
+  const exportStatusWord = async () => {
+    try {
+      const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
+      const rows: TableRow[] = [];
 
-    const html = `
-      <div style="font-family: Arial, sans-serif; margin-bottom: 16px;">
-        <h2>${department?.department_name || 'All Departments'} — Student Feedback Status</h2>
-        <p>Year: ${selectedYear} ${isMechanicalSS && selectedSection !== 'ALL' ? `| Section: ${selectedSection}` : ''} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}</p>
-      </div>
-      <table style="width: 100%; border-collapse: collapse;">
-        <thead>
-          <tr>
-            <th colspan="3" style="border: 1px solid black; padding: 8px; background-color: #d1fae5;">Completed Students (${statusData.completed.length})</th>
-            <th colspan="3" style="border: 1px solid black; padding: 8px; background-color: #fef3c7;">Pending Students (${statusData.pending.length})</th>
-          </tr>
-          <tr>
-            <th style="border: 1px solid black; padding: 8px;">Register number</th>
-            <th style="border: 1px solid black; padding: 8px;">Name</th>
-            <th style="border: 1px solid black; padding: 8px;">Submitted At</th>
-            <th style="border: 1px solid black; padding: 8px;">Register number</th>
-            <th style="border: 1px solid black; padding: 8px;">Name</th>
-            <th style="border: 1px solid black; padding: 8px;">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml}
-        </tbody>
-      </table>
-    `;
+      // Header row 1: Group badges
+      rows.push(
+        new TableRow({
+          children: [
+            new TableCell({
+              columnSpan: 3,
+              shading: { fill: 'D1FAE5' },
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: `Completed Students (${statusData.completed.length})`, bold: true, size: 20 })],
+                  alignment: AlignmentType.CENTER
+                })
+              ]
+            }),
+            new TableCell({
+              columnSpan: 3,
+              shading: { fill: 'FEF3C7' },
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: `Pending Students (${statusData.pending.length})`, bold: true, size: 20 })],
+                  alignment: AlignmentType.CENTER
+                })
+              ]
+            })
+          ]
+        })
+      );
 
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Student Status</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px 12px; text-align: center; } th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3), th:nth-child(5), td:nth-child(5), th:nth-child(6), td:nth-child(6) { text-align: left; }</style></head><body>";
-    const footer = "</body></html>";
-    const content = header + html + footer;
-    const secSuffix = isMechanicalSS && selectedSection !== 'ALL' ? `_Sec_${selectedSection}` : '';
-    const filename = `${(department?.department_name || 'Department').replace(/[^a-zA-Z0-9]/g, '_')}_Year_${selectedYear}${secSuffix}_Student_Status`;
-    
-    // @ts-ignore
-    if (window.htmlDocx && window.saveAs) {
-      // @ts-ignore
-      const converted = window.htmlDocx.asBlob(content);
-      // @ts-ignore
-      window.saveAs(converted, `${filename}.docx`);
-    } else {
-      const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(content);
-      const fileDownload = document.createElement("a");
-      document.body.appendChild(fileDownload);
-      fileDownload.href = source;
-      fileDownload.download = filename + '.doc';
-      fileDownload.click();
-      document.body.removeChild(fileDownload);
+      // Header row 2: Table Column Titles
+      rows.push(
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Register number', bold: true, size: 18 })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Name', bold: true, size: 18 })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Submitted At', bold: true, size: 18 })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Register number', bold: true, size: 18 })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Name', bold: true, size: 18 })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Status', bold: true, size: 18 })] })] })
+          ]
+        })
+      );
+
+      for (let i = 0; i < maxRows; i++) {
+        const comp = statusData.completed[i] || { Register_Number: '', Student_Name: '', Submitted: '' };
+        const pend = statusData.pending[i] || { Register_Number: '', Student_Name: '', Status: '' };
+        rows.push(
+          new TableRow({
+            children: [
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: comp.Register_Number || '-', size: 18 })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: comp.Student_Name || '-', size: 18 })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: comp.Submitted || '-', size: 18 })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: pend.Register_Number || '-', size: 18 })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: pend.Student_Name || '-', size: 18 })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: pend.Status || '-', size: 18 })] })] })
+            ]
+          })
+        );
+      }
+
+      const secSuffix = isMechanicalSS && selectedSection !== 'ALL' ? `_Sec_${selectedSection}` : '';
+      const doc = new Document({
+        sections: [
+          {
+            properties: {},
+            children: [
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `${department?.department_name || 'All Departments'} — Student Feedback Status`,
+                    bold: true,
+                    size: 28
+                  })
+                ],
+                spacing: { after: 120 }
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `Year: ${selectedYear} ${isMechanicalSS && selectedSection !== 'ALL' ? `| Section: ${selectedSection}` : ''} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}`,
+                    size: 20
+                  })
+                ],
+                spacing: { after: 240 }
+              }),
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows
+              })
+            ]
+          }
+        ]
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const filename = `${(department?.department_name || 'Department').replace(/[^a-zA-Z0-9]/g, '_')}_Year_${selectedYear}${secSuffix}_Student_Status.docx`;
+      saveAs(blob, filename);
+    } catch (err: any) {
+      console.error('Error generating status Word document:', err);
+      alert('Failed to generate Word document: ' + (err.message || ''));
     }
   };
 
@@ -999,6 +1060,14 @@ export default function FacultyDashboard() {
                   <button onClick={() => { setLoading(true); initDashboard(); }} className="flex items-center px-4 py-2 bg-white text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors shadow-sm border border-gray-200 text-xs sm:text-sm cursor-pointer">
                     <RefreshCw className="w-4 h-4 mr-2 text-gray-500" /> Refresh Data
                   </button>
+                  <button
+                    onClick={downloadAllReports}
+                    disabled={downloadingAll || !resultData}
+                    className="flex items-center px-4 py-2 bg-blue-50 text-[#1E3A8A] font-semibold rounded-xl hover:bg-blue-100 transition-colors shadow-sm border border-blue-200 text-xs sm:text-sm cursor-pointer disabled:opacity-50"
+                  >
+                    <FileText className="w-4 h-4 mr-2 text-[#1E3A8A]" />
+                    {downloadingAll ? 'Generating All...' : 'Download All Reports (.docx)'}
+                  </button>
                 </div>
               </div>
 
@@ -1066,9 +1135,19 @@ export default function FacultyDashboard() {
                           </div>
                           
                           <div className="flex items-center space-x-3">
-                            <button onClick={() => exportToWord(exportTableId, `Feedback_${facultyDisplayName}`)} className="flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors border border-blue-100">
-                              <FileText className="w-3.5 h-3.5 mr-1.5" /> Word
-                            </button>
+                            <DownloadQuestionWiseReportButton
+                              facultyId={fac.faculty_id}
+                              subjectId={courseGrp.subject?.id || fac.subject_id}
+                              cycleId={activeCycle?.id || ''}
+                              facultyName={facultyDisplayName}
+                              subjectName={getSubjectName(courseGrp.subject)}
+                              courseCode={courseGrp.subject?.course_code || ''}
+                              departmentName={department?.department_name}
+                              totalStrength={getFilteredData().filteredStudents.filter(s => s.semester === fac.semester && matchesSection(fac.section, s.section)).length || getFilteredData().filteredStudents.length}
+                              appeared={fac.totalResponses}
+                              cachedQStats={fac.qStats}
+                              totalResponses={fac.totalResponses}
+                            />
                             <button onClick={() => exportFacultyToExcel(fac, getSubjectName(courseGrp.subject))} className="flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-100">
                               <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" /> Excel
                             </button>
