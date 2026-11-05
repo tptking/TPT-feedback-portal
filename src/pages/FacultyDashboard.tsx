@@ -28,10 +28,14 @@ export default function FacultyDashboard() {
   const [selectedYear, setSelectedYear] = useState<number>(3);
   const [selectedSection, setSelectedSection] = useState<string>('A');
 
-  const isMechanicalSS = Boolean(
+  const isMultiSectionDepartment = Boolean(
     department?.department_code === 'ME-SS' ||
+    department?.department_code === 'ECE' ||
     (department?.department_name?.toLowerCase().includes('mechanical') &&
-     department?.department_name?.toLowerCase().includes('ss'))
+     department?.department_name?.toLowerCase().includes('ss')) ||
+    (department?.department_name?.toLowerCase().includes('electronics') &&
+     department?.department_name?.toLowerCase().includes('communication')) ||
+    students.some(s => s.section && s.section.trim().toUpperCase() === 'B')
   );
 
   const activeCycle = allCycles.find(c => c.year === selectedYear);
@@ -552,7 +556,7 @@ export default function FacultyDashboard() {
     let filteredStudents = students.filter(s => s.year === selectedYear);
     let filteredAssignments = assignments.filter(a => a.year === selectedYear);
 
-    if (isMechanicalSS && selectedSection !== 'ALL') {
+    if (isMultiSectionDepartment && selectedSection !== 'ALL') {
       filteredStudents = filteredStudents.filter(
         s => (s.section || '').trim().toUpperCase() === selectedSection.toUpperCase()
       );
@@ -851,7 +855,7 @@ export default function FacultyDashboard() {
         );
       }
 
-      const secSuffix = isMechanicalSS && selectedSection !== 'ALL' ? `_Sec_${selectedSection}` : '';
+      const secSuffix = isMultiSectionDepartment && selectedSection !== 'ALL' ? `_Sec_${selectedSection}` : '';
       const doc = new Document({
         sections: [
           {
@@ -870,7 +874,7 @@ export default function FacultyDashboard() {
               new Paragraph({
                 children: [
                   new TextRun({
-                    text: `Year: ${selectedYear} ${isMechanicalSS && selectedSection !== 'ALL' ? `| Section: ${selectedSection}` : ''} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}`,
+                    text: `Year: ${selectedYear} ${isMultiSectionDepartment && selectedSection !== 'ALL' ? `| Section: ${selectedSection}` : ''} | Completed: ${statusData.completed.length} | Pending: ${statusData.pending.length}`,
                     size: 20
                   })
                 ],
@@ -897,7 +901,7 @@ export default function FacultyDashboard() {
   const exportStatusExcel = () => {
     const data: any[] = [];
     const maxRows = Math.max(statusData.completed.length, statusData.pending.length);
-    data.push({ A: `${department?.department_name || 'Department'} — Year ${selectedYear}${isMechanicalSS && selectedSection !== 'ALL' ? ` (Section ${selectedSection})` : ''} Student Feedback Status` });
+    data.push({ A: `${department?.department_name || 'Department'} — Year ${selectedYear}${isMultiSectionDepartment && selectedSection !== 'ALL' ? ` (Section ${selectedSection})` : ''} Student Feedback Status` });
     data.push({ A: 'Completed students', B: '', C: '', D: 'Pending students', E: '', F: '' });
     data.push({ A: 'Register number', B: 'Name', C: 'Submitted At', D: 'Register number', E: 'Name', F: 'Status' });
     
@@ -1003,7 +1007,7 @@ export default function FacultyDashboard() {
               </select>
             </div>
 
-            {isMechanicalSS && (
+            {isMultiSectionDepartment && (
               <div className="flex items-center space-x-2 animate-fade-in">
                 <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Section:</span>
                 <select
@@ -1046,7 +1050,7 @@ export default function FacultyDashboard() {
                 <div>
                   <h2 className="text-xl font-bold text-gray-900">Overall Feedback Results</h2>
                   <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-                    Live department overview and analytics for {department?.department_name}{isMechanicalSS && selectedSection !== 'ALL' ? ` — Section ${selectedSection}` : ''}.
+                    Live department overview and analytics for {department?.department_name}{isMultiSectionDepartment && selectedSection !== 'ALL' ? ` — Section ${selectedSection}` : ''}.
                   </p>
                 </div>
                 <div className="flex items-center space-x-3">
@@ -1268,7 +1272,7 @@ export default function FacultyDashboard() {
                   <span className="font-bold text-[#1E3A8A]">{department?.department_name}</span>
                   <span className="text-gray-400">•</span>
                   <span>Year {selectedYear}</span>
-                  {isMechanicalSS && (
+                  {isMultiSectionDepartment && (
                     <>
                       <span className="text-gray-400">•</span>
                       <span className="font-bold text-indigo-700">
@@ -1289,7 +1293,7 @@ export default function FacultyDashboard() {
                         Completed Students — {department?.department_name} ({filteredCompleted.length})
                       </h3>
                       <span className="text-xs font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
-                        Year {selectedYear}{isMechanicalSS && selectedSection !== 'ALL' ? ` • Sec ${selectedSection}` : ''}
+                        Year {selectedYear}{isMultiSectionDepartment && selectedSection !== 'ALL' ? ` • Sec ${selectedSection}` : ''}
                       </span>
                     </div>
                     <div className="overflow-x-auto max-h-[550px] overflow-y-auto">
@@ -1335,7 +1339,7 @@ export default function FacultyDashboard() {
                         Pending Students — {department?.department_name} ({filteredPending.length})
                       </h3>
                       <span className="text-xs font-bold text-amber-700 bg-amber-100/80 px-2.5 py-1 rounded-full">
-                        Year {selectedYear}{isMechanicalSS && selectedSection !== 'ALL' ? ` • Sec ${selectedSection}` : ''}
+                        Year {selectedYear}{isMultiSectionDepartment && selectedSection !== 'ALL' ? ` • Sec ${selectedSection}` : ''}
                       </span>
                     </div>
                     <div className="overflow-x-auto max-h-[550px] overflow-y-auto">
