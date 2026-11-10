@@ -1002,6 +1002,7 @@ export default function FacultyDashboard() {
                 onChange={(e) => setSelectedYear(Number(e.target.value))}
                 className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#1E3A8A] focus:border-[#1E3A8A] p-2.5 outline-none font-semibold shadow-sm cursor-pointer"
               >
+                <option value={1}>First Year (I)</option>
                 <option value={2}>Second Year (II)</option>
                 <option value={3}>Third Year (III)</option>
               </select>
