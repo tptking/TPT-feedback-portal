@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search } from 'lucide-react';
+import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search, ChevronDown, Archive, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import PizZip from 'pizzip';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, WidthType, AlignmentType, TextRun } from 'docx';
 import DownloadQuestionWiseReportButton from '../components/DownloadQuestionWiseReportButton';
 import { generateAndDownloadReportInBrowser } from '../services/questionWiseReportService';
@@ -44,6 +45,19 @@ export default function FacultyDashboard() {
   const [loadingAnswers, setLoadingAnswers] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadingAllExcel, setDownloadingAllExcel] = useState(false);
+  const [showExcelMenu, setShowExcelMenu] = useState(false);
+  const excelMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (excelMenuRef.current && !excelMenuRef.current.contains(event.target as Node)) {
+        setShowExcelMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Keep references to latest state to avoid stale React closures in background polling
   const facultyRef = useRef<any>(null);
@@ -479,11 +493,13 @@ export default function FacultyDashboard() {
     return subjObj.subject_name || 'Subject';
   };
 
-  const exportFacultyToExcel = (fac: any, subjectName: string) => {
+  const generateFacultySheetData = (fac: any, subjectName: string, courseCode?: string) => {
     const facultyName = getFacultyName(fac.faculty);
     const data: any[] = [
       { A: 'Subject:', B: subjectName },
       { A: 'Faculty:', B: facultyName },
+      ...(courseCode ? [{ A: 'Course Code:', B: courseCode }] : []),
+      { A: 'Total Responses:', B: fac.totalResponses || 0 },
       {},
       { 
         A: 'Qns. No', B: 'Questions', C: 'Excellent (5)', D: 'Very Good (4)', 
@@ -537,9 +553,169 @@ export default function FacultyDashboard() {
       { wch: 15 }  // Feedback (%)
     ];
 
+    return { ws, facultyName, totalPercentage };
+  };
+
+  const exportFacultyToExcel = (fac: any, subjectName: string, courseCode?: string) => {
+    const { ws, facultyName } = generateFacultySheetData(fac, subjectName, courseCode);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Feedback");
     XLSX.writeFile(wb, `Feedback_${facultyName.replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  const sanitizeSheetName = (name: string, usedNames: Set<string>): string => {
+    let clean = name.replace(/[:\\/?*\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (clean.length > 28) clean = clean.slice(0, 28).trim();
+    if (!clean) clean = 'Sheet';
+
+    let finalName = clean;
+    let counter = 1;
+    while (usedNames.has(finalName.toLowerCase())) {
+      const suffix = ` (${counter})`;
+      const base = clean.slice(0, 31 - suffix.length).trim();
+      finalName = `${base}${suffix}`;
+      counter++;
+    }
+    usedNames.add(finalName.toLowerCase());
+    return finalName;
+  };
+
+  const downloadAllExcelReports = async (mode: 'combined' | 'zip' | 'individual' = 'combined') => {
+    if (!resultData || !resultData.groupedCourseStats || resultData.groupedCourseStats.length === 0) {
+      alert('No course results available to export.');
+      return;
+    }
+
+    const facultyList: Array<{
+      fac: any;
+      courseGrp: any;
+      subjectName: string;
+      courseCode: string;
+      facultyName: string;
+    }> = [];
+
+    for (const courseGrp of resultData.groupedCourseStats) {
+      const subjectName = getSubjectName(courseGrp.subject);
+      const courseCode = courseGrp.subject?.course_code || '';
+      for (const fac of courseGrp.faculties) {
+        if (fac.totalResponses > 0) {
+          facultyList.push({
+            fac,
+            courseGrp,
+            subjectName,
+            courseCode,
+            facultyName: getFacultyName(fac.faculty)
+          });
+        }
+      }
+    }
+
+    if (facultyList.length === 0) {
+      alert('No courses with submitted feedback found to generate Excel reports.');
+      return;
+    }
+
+    try {
+      setDownloadingAllExcel(true);
+      const deptCode = department?.department_code || 'Dept';
+      const secTag = isMultiSectionDepartment && selectedSection !== 'ALL' ? `_Sec${selectedSection}` : '';
+      const baseFilename = `${deptCode.replace(/[^a-zA-Z0-9]/g, '_')}_Year${selectedYear}${secTag}_Feedback_Reports`;
+
+      if (mode === 'combined') {
+        const wb = XLSX.utils.book_new();
+
+        // 1. Overall Summary Sheet
+        const summaryData: any[] = [
+          { A: `${department?.department_name || 'Department'} — Year ${selectedYear}${isMultiSectionDepartment && selectedSection !== 'ALL' ? ` (Section ${selectedSection})` : ''} Feedback Summary` },
+          {},
+          {
+            A: 'S.No',
+            B: 'Course Code',
+            C: 'Subject Name',
+            D: 'Faculty Name',
+            E: 'Responses',
+            F: 'Feedback (%)'
+          }
+        ];
+
+        const facultyResults: Array<{ ws: any; facultyName: string; totalPercentage: string; courseCode: string }> = [];
+
+        facultyList.forEach((item, index) => {
+          const { ws, facultyName, totalPercentage } = generateFacultySheetData(item.fac, item.subjectName, item.courseCode);
+          facultyResults.push({ ws, facultyName, totalPercentage, courseCode: item.courseCode });
+
+          summaryData.push({
+            A: index + 1,
+            B: item.courseCode,
+            C: item.subjectName,
+            D: facultyName,
+            E: item.fac.totalResponses,
+            F: totalPercentage
+          });
+        });
+
+        const avgScore = (facultyResults.reduce((acc, curr) => acc + parseFloat(curr.totalPercentage || '0'), 0) / facultyResults.length).toFixed(2);
+        summaryData.push({});
+        summaryData.push({
+          A: '',
+          B: '',
+          C: 'Average Feedback Percentage:',
+          D: '',
+          E: '',
+          F: avgScore
+        });
+
+        const summaryWs = XLSX.utils.json_to_sheet(summaryData, { skipHeader: true });
+        summaryWs['!cols'] = [
+          { wch: 8 },
+          { wch: 18 },
+          { wch: 45 },
+          { wch: 28 },
+          { wch: 14 },
+          { wch: 16 }
+        ];
+        XLSX.utils.book_append_sheet(wb, summaryWs, "Overall Summary");
+
+        // 2. Individual Question-Wise Sheets for each Faculty/Course
+        const usedSheetNames = new Set<string>(['overall summary']);
+        facultyResults.forEach((res) => {
+          const preferredTitle = res.courseCode ? `${res.courseCode.split('-').pop() || ''} - ${res.facultyName}` : res.facultyName;
+          const sheetName = sanitizeSheetName(preferredTitle, usedSheetNames);
+          XLSX.utils.book_append_sheet(wb, res.ws, sheetName);
+        });
+
+        XLSX.writeFile(wb, `${baseFilename}.xlsx`);
+      } else if (mode === 'zip') {
+        const zip = new PizZip();
+        for (const item of facultyList) {
+          const { ws, facultyName } = generateFacultySheetData(item.fac, item.subjectName, item.courseCode);
+          const singleWb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(singleWb, ws, "Feedback");
+          const wbBuf = XLSX.write(singleWb, { bookType: 'xlsx', type: 'array' });
+          const fname = `Feedback_${facultyName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${(item.courseCode || 'course').replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`;
+          zip.file(fname, wbBuf, { binary: true });
+        }
+        const zipBlob = zip.generate({
+          type: 'blob',
+          mimeType: 'application/zip',
+          compression: 'DEFLATE'
+        });
+        saveAs(zipBlob, `${baseFilename}.zip`);
+      } else if (mode === 'individual') {
+        for (const item of facultyList) {
+          const { ws, facultyName } = generateFacultySheetData(item.fac, item.subjectName, item.courseCode);
+          const singleWb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(singleWb, ws, "Feedback");
+          XLSX.writeFile(singleWb, `Feedback_${facultyName.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`);
+          await new Promise(res => setTimeout(res, 350));
+        }
+      }
+    } catch (err: any) {
+      console.error('Batch Excel export error:', err);
+      alert(err.message || 'Error generating Excel feedback reports.');
+    } finally {
+      setDownloadingAllExcel(false);
+    }
   };
 
   // ----- CALCULATIONS -----
@@ -1054,7 +1230,7 @@ export default function FacultyDashboard() {
                     Live department overview and analytics for {department?.department_name}{isMultiSectionDepartment && selectedSection !== 'ALL' ? ` — Section ${selectedSection}` : ''}.
                   </p>
                 </div>
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center flex-wrap gap-2.5">
                   <div className="flex items-center text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl shadow-2xs">
                     <span className="relative flex h-2 w-2 mr-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -1073,6 +1249,62 @@ export default function FacultyDashboard() {
                     <FileText className="w-4 h-4 mr-2 text-[#1E3A8A]" />
                     {downloadingAll ? 'Generating All...' : 'Download All Reports (.docx)'}
                   </button>
+
+                  {/* Download All Reports (.xlsx) Button with Options */}
+                  <div ref={excelMenuRef} className="relative inline-flex items-center">
+                    <button
+                      onClick={() => downloadAllExcelReports('combined')}
+                      disabled={downloadingAllExcel || !resultData}
+                      className="flex items-center px-4 py-2 bg-emerald-50 text-emerald-800 font-semibold rounded-l-xl hover:bg-emerald-100 transition-colors shadow-sm border border-emerald-200 text-xs sm:text-sm cursor-pointer disabled:opacity-50"
+                      title="Download all faculty reports in one consolidated Excel workbook"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-700" />
+                      {downloadingAllExcel ? 'Exporting All...' : 'Download All Reports (.xlsx)'}
+                    </button>
+                    <button
+                      onClick={() => setShowExcelMenu(!showExcelMenu)}
+                      disabled={downloadingAllExcel || !resultData}
+                      className="px-2.5 py-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors border-y border-r border-emerald-200 rounded-r-xl shadow-sm text-xs sm:text-sm cursor-pointer disabled:opacity-50"
+                      title="More Excel export options"
+                    >
+                      <ChevronDown className={`w-4 h-4 text-emerald-700 transition-transform ${showExcelMenu ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showExcelMenu && (
+                      <div className="absolute right-0 top-full mt-1.5 w-64 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 z-50 text-xs font-medium animate-fade-in">
+                        <button
+                          onClick={() => { setShowExcelMenu(false); downloadAllExcelReports('combined'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 flex items-center space-x-2.5 transition-colors cursor-pointer"
+                        >
+                          <FileSpreadsheet className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Combined Workbook (.xlsx)</p>
+                            <p className="text-[10px] text-gray-500 font-normal">All subjects & faculty tabs in one file</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => { setShowExcelMenu(false); downloadAllExcelReports('zip'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 flex items-center space-x-2.5 transition-colors cursor-pointer border-t border-gray-50"
+                        >
+                          <Archive className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Download All as ZIP (.zip)</p>
+                            <p className="text-[10px] text-gray-500 font-normal">All separate faculty Excel files in a zip</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => { setShowExcelMenu(false); downloadAllExcelReports('individual'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 flex items-center space-x-2.5 transition-colors cursor-pointer border-t border-gray-50"
+                        >
+                          <Download className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Individual Files (.xlsx)</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Batch download separate file for each staff</p>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1153,7 +1385,7 @@ export default function FacultyDashboard() {
                               cachedQStats={fac.qStats}
                               totalResponses={fac.totalResponses}
                             />
-                            <button onClick={() => exportFacultyToExcel(fac, getSubjectName(courseGrp.subject))} className="flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-100">
+                            <button onClick={() => exportFacultyToExcel(fac, getSubjectName(courseGrp.subject), courseGrp.subject?.course_code)} className="flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-100 cursor-pointer">
                               <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" /> Excel
                             </button>
                             <div className="bg-[#1E3A8A] text-white px-4 py-1.5 rounded-lg font-bold text-sm shadow-sm ml-2">
