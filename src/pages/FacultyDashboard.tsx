@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search, ChevronDown, Archive, Download } from 'lucide-react';
+import { LogOut, BarChart3, Users, Settings, FileSpreadsheet, FileText, CheckCircle2, XCircle, Edit, RefreshCw, AlertCircle, Search, ChevronDown, Archive, Download, Copy, Check, Share2, MessageSquare } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import PizZip from 'pizzip';
@@ -49,10 +49,30 @@ export default function FacultyDashboard() {
   const [showExcelMenu, setShowExcelMenu] = useState(false);
   const excelMenuRef = useRef<HTMLDivElement>(null);
 
+  const [showCopyStatusMenu, setShowCopyStatusMenu] = useState(false);
+  const [showCopyStatusMenu2, setShowCopyStatusMenu2] = useState(false);
+  const copyStatusMenuRef = useRef<HTMLDivElement>(null);
+  const copyStatusMenuRef2 = useRef<HTMLDivElement>(null);
+
+  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [statusModalScope, setStatusModalScope] = useState<'all' | '1' | '2' | '3'>('all');
+  const [statusModalSection, setStatusModalSection] = useState<'ALL' | 'A' | 'B'>('ALL');
+  const [useShortDeptName, setUseShortDeptName] = useState(false);
+  const [customStatusText, setCustomStatusText] = useState('');
+  const [isCustomized, setIsCustomized] = useState(false);
+  const [copiedToast, setCopiedToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (excelMenuRef.current && !excelMenuRef.current.contains(event.target as Node)) {
         setShowExcelMenu(false);
+      }
+      if (copyStatusMenuRef.current && !copyStatusMenuRef.current.contains(event.target as Node)) {
+        setShowCopyStatusMenu(false);
+      }
+      if (copyStatusMenuRef2.current && !copyStatusMenuRef2.current.contains(event.target as Node)) {
+        setShowCopyStatusMenu2(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -932,6 +952,194 @@ export default function FacultyDashboard() {
     return { completed, pending };
   };
 
+  // Helper to calculate student completion counts for any year / section
+  const getYearStatus = useCallback((targetYear: number, targetSection?: string) => {
+    // 1. Students in this year (and section if applicable)
+    let yearStudents = students.filter(s => s.year === targetYear && s.active !== false);
+    if (targetSection && targetSection !== 'ALL') {
+      yearStudents = yearStudents.filter(
+        s => (s.section || '').trim().toUpperCase() === targetSection.trim().toUpperCase()
+      );
+    }
+    const totalStrength = yearStudents.length;
+
+    if (totalStrength === 0) {
+      return {
+        year: targetYear,
+        section: targetSection,
+        totalStrength: 0,
+        completedStudents: 0,
+        pendingStudents: 0
+      };
+    }
+
+    // 2. Cycle for this year
+    const cycle = allCycles.find(
+      c => c.year === targetYear && (!targetSection || targetSection === 'ALL' || !c.section || c.section === targetSection)
+    );
+
+    // 3. Assignments for this year
+    let yearAssignments = assignments.filter(a => a.year === targetYear && a.active !== false);
+    if (targetSection && targetSection !== 'ALL') {
+      yearAssignments = yearAssignments.filter(a => matchesSection(a.section, targetSection));
+    }
+
+    // 4. Expected answers per response
+    const activeQuestions = questions.filter(q => q.active !== false);
+    const expectedAnswersPerResponse = activeQuestions.length > 0 ? activeQuestions.length : 10;
+    const ansCountByRespId = new Map<string, number>();
+    answers.forEach((a: any) => {
+      ansCountByRespId.set(a.response_id, (ansCountByRespId.get(a.response_id) || 0) + 1);
+    });
+
+    // 5. Responses
+    const studentIds = new Set(yearStudents.map(s => s.id));
+    const yearResponses = responses.filter(
+      r => studentIds.has(r.student_id) && (!cycle || r.feedback_cycle_id === cycle.id)
+    );
+
+    let completedStudents = 0;
+    yearStudents.forEach(s => {
+      const sAssignments = yearAssignments.filter(
+        a => a.semester === s.semester && matchesSection(a.section, s.section)
+      );
+      const requiredCount = sAssignments.length;
+      if (requiredCount === 0) {
+        const sResps = yearResponses.filter(r => r.student_id === s.id);
+        if (sResps.length > 0) completedStudents++;
+        return;
+      }
+
+      const sResponses = yearResponses.filter(r => r.student_id === s.id);
+      const completedSet = new Set(
+        sResponses
+          .filter(r => (ansCountByRespId.get(r.id) || 0) >= expectedAnswersPerResponse)
+          .map(r => `${r.subject_id}-${r.faculty_id}`)
+      );
+
+      const isDone = sAssignments.every(a => completedSet.has(`${a.subject_id}-${a.faculty_id}`));
+      if (isDone) completedStudents++;
+    });
+
+    const pendingStudents = Math.max(0, totalStrength - completedStudents);
+
+    return {
+      year: targetYear,
+      section: targetSection,
+      totalStrength,
+      completedStudents,
+      pendingStudents
+    };
+  }, [students, assignments, allCycles, questions, answers, responses]);
+
+  // Generate copyable text format
+  const generateStatusText = useCallback(
+    (scope: 'all' | '1' | '2' | '3' | number, sectionChoice?: string, shortCode = false) => {
+      const deptName = shortCode && department?.department_code
+        ? department.department_code
+        : (department?.department_name || department?.department_code || 'Department');
+
+      const lines: string[] = [];
+      lines.push(deptName);
+      lines.push('');
+
+      const yearLabels: Record<number, string> = {
+        1: 'First Year',
+        2: 'Second year',
+        3: 'Third Year'
+      };
+
+      const yearsToInclude: number[] = [];
+      if (scope === 'all') {
+        [1, 2, 3].forEach(yr => {
+          if (students.some(s => s.year === yr)) {
+            yearsToInclude.push(yr);
+          }
+        });
+        if (yearsToInclude.length === 0) yearsToInclude.push(1, 2, 3);
+      } else {
+        yearsToInclude.push(typeof scope === 'number' ? scope : parseInt(scope as string, 10));
+      }
+
+      yearsToInclude.forEach((yr, idx) => {
+        const yrLabel = yearLabels[yr] || `Year ${yr}`;
+
+        if (isMultiSectionDepartment) {
+          const yrStudents = students.filter(s => s.year === yr);
+          const sections = Array.from(
+            new Set(yrStudents.map(s => (s.section || 'A').toUpperCase()))
+          ).sort();
+
+          const targetSections =
+            sectionChoice && sectionChoice !== 'ALL'
+              ? [sectionChoice]
+              : sections.length > 0
+              ? sections
+              : ['A', 'B'];
+
+          targetSections.forEach((sec, secIdx) => {
+            const stats = getYearStatus(yr, sec);
+            lines.push(`${yrLabel} (Section ${sec}):`);
+            lines.push(`Total strength: ${stats.totalStrength}`);
+            lines.push(`Completed students: ${stats.completedStudents}`);
+            lines.push(`Pending students: ${stats.pendingStudents}`);
+            if (secIdx < targetSections.length - 1 || idx < yearsToInclude.length - 1) {
+              lines.push('');
+            }
+          });
+        } else {
+          const stats = getYearStatus(yr);
+          lines.push(`${yrLabel}:`);
+          lines.push(`Total strength: ${stats.totalStrength}`);
+          lines.push(`Completed students: ${stats.completedStudents}`);
+          lines.push(`Pending students: ${stats.pendingStudents}`);
+          if (idx < yearsToInclude.length - 1) {
+            lines.push('');
+          }
+        }
+      });
+
+      return lines.join('\n');
+    },
+    [department, students, isMultiSectionDepartment, getYearStatus]
+  );
+
+  const copyToClipboard = async (text: string, successMessage = 'Status copied to clipboard!') => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      setCopiedToast(true);
+      setToastMessage(successMessage);
+      setTimeout(() => {
+        setCopiedToast(false);
+        setToastMessage(null);
+      }, 3000);
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+      alert('Unable to auto-copy to clipboard. Please copy the text manually from the preview.');
+    }
+  };
+
+  const copyStatusToClipboard = (scope: 'all' | 'current' = 'all') => {
+    const targetScope = scope === 'current' ? selectedYear : 'all';
+    const targetSection = isMultiSectionDepartment && selectedSection !== 'ALL' ? selectedSection : undefined;
+    const text = generateStatusText(targetScope, targetSection, useShortDeptName);
+    const scopeLabel = scope === 'current' ? `Year ${selectedYear}` : 'All Years';
+    copyToClipboard(text, `Copied ${department?.department_name || 'Department'} (${scopeLabel}) status!`);
+  };
+
   if (loading || !faculty) {
     return (
       <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center">
@@ -1305,6 +1513,69 @@ export default function FacultyDashboard() {
                       </div>
                     )}
                   </div>
+
+                  {/* Copy Status Message Button with Dropdown */}
+                  <div ref={copyStatusMenuRef} className="relative inline-flex items-center">
+                    <button
+                      onClick={() => copyStatusToClipboard('all')}
+                      className="flex items-center px-4 py-2 bg-indigo-50 text-indigo-700 font-semibold rounded-l-xl hover:bg-indigo-100 transition-colors shadow-sm border border-indigo-200 text-xs sm:text-sm cursor-pointer"
+                      title="Copy full department status text to clipboard"
+                    >
+                      {copiedToast ? (
+                        <>
+                          <Check className="w-4 h-4 mr-2 text-emerald-600" />
+                          <span className="text-emerald-700 font-bold">Copied Status!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4 mr-2 text-indigo-600" />
+                          <span>Copy Status</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowCopyStatusMenu(!showCopyStatusMenu)}
+                      className="px-2.5 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors border-y border-r border-indigo-200 rounded-r-xl shadow-sm text-xs sm:text-sm cursor-pointer"
+                      title="More copy options"
+                    >
+                      <ChevronDown className={`w-4 h-4 text-indigo-600 transition-transform ${showCopyStatusMenu ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showCopyStatusMenu && (
+                      <div className="absolute right-0 top-full mt-1.5 w-64 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 z-50 text-xs font-medium animate-fade-in">
+                        <button
+                          onClick={() => { setShowCopyStatusMenu(false); copyStatusToClipboard('all'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50 text-gray-700 hover:text-indigo-800 flex items-center space-x-2.5 transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Copy All Years</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Full status for Year 1, 2, and 3</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => { setShowCopyStatusMenu(false); copyStatusToClipboard('current'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50 text-gray-700 hover:text-indigo-800 flex items-center space-x-2.5 transition-colors cursor-pointer border-t border-gray-50"
+                        >
+                          <Copy className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Copy Current Year (Year {selectedYear})</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Only status for selected year</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => { setShowCopyStatusMenu(false); setShowStatusModal(true); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50 text-gray-700 hover:text-indigo-800 flex items-center space-x-2.5 transition-colors cursor-pointer border-t border-gray-50"
+                        >
+                          <MessageSquare className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Preview & Customize Message...</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Edit text or copy individual years</p>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1484,6 +1755,69 @@ export default function FacultyDashboard() {
                   <button onClick={exportStatusExcel} className="flex items-center px-3.5 py-2 bg-emerald-50 text-emerald-700 font-semibold rounded-xl hover:bg-emerald-100 transition-colors text-xs sm:text-sm">
                     <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Export Excel
                   </button>
+
+                  {/* Copy Status Message Button with Dropdown */}
+                  <div ref={copyStatusMenuRef2} className="relative inline-flex items-center">
+                    <button
+                      onClick={() => copyStatusToClipboard('all')}
+                      className="flex items-center px-3.5 py-2 bg-indigo-50 text-indigo-700 font-semibold rounded-l-xl hover:bg-indigo-100 transition-colors text-xs sm:text-sm border border-indigo-200 cursor-pointer shadow-sm"
+                      title="Copy full department status text to clipboard"
+                    >
+                      {copiedToast ? (
+                        <>
+                          <Check className="w-4 h-4 mr-1.5 text-emerald-600" />
+                          <span className="text-emerald-700 font-bold">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4 mr-1.5 text-indigo-600" />
+                          <span>Copy Status</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowCopyStatusMenu2(!showCopyStatusMenu2)}
+                      className="px-2 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors border-y border-r border-indigo-200 rounded-r-xl shadow-sm text-xs sm:text-sm cursor-pointer"
+                      title="More copy options"
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 text-indigo-600 transition-transform ${showCopyStatusMenu2 ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showCopyStatusMenu2 && (
+                      <div className="absolute right-0 top-full mt-1.5 w-64 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 z-50 text-xs font-medium animate-fade-in">
+                        <button
+                          onClick={() => { setShowCopyStatusMenu2(false); copyStatusToClipboard('all'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50 text-gray-700 hover:text-indigo-800 flex items-center space-x-2.5 transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Copy All Years</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Full status for Year 1, 2, and 3</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => { setShowCopyStatusMenu2(false); copyStatusToClipboard('current'); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50 text-gray-700 hover:text-indigo-800 flex items-center space-x-2.5 transition-colors cursor-pointer border-t border-gray-50"
+                        >
+                          <Copy className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Copy Current Year (Year {selectedYear})</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Only status for selected year</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => { setShowCopyStatusMenu2(false); setShowStatusModal(true); }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50 text-gray-700 hover:text-indigo-800 flex items-center space-x-2.5 transition-colors cursor-pointer border-t border-gray-50"
+                        >
+                          <MessageSquare className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Preview & Customize Message...</p>
+                            <p className="text-[10px] text-gray-500 font-normal">Edit text or copy individual years</p>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1756,6 +2090,224 @@ export default function FacultyDashboard() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* STATUS MESSAGE MODAL */}
+      {showStatusModal && (
+        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-gray-900">Copy Status for Mentor</h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    {department?.department_name} ({department?.department_code})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowStatusModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Scope Selector Tabs */}
+            <div className="p-6 pb-2 space-y-4 flex-1 overflow-y-auto">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Select Scope:</span>
+                <div className="inline-flex rounded-xl bg-gray-100 p-1 text-xs font-semibold">
+                  <button
+                    onClick={() => { setStatusModalScope('all'); setIsCustomized(false); }}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      statusModalScope === 'all'
+                        ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    All Years
+                  </button>
+                  <button
+                    onClick={() => { setStatusModalScope('1'); setIsCustomized(false); }}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      statusModalScope === '1'
+                        ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    First Year
+                  </button>
+                  <button
+                    onClick={() => { setStatusModalScope('2'); setIsCustomized(false); }}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      statusModalScope === '2'
+                        ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Second Year
+                  </button>
+                  <button
+                    onClick={() => { setStatusModalScope('3'); setIsCustomized(false); }}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      statusModalScope === '3'
+                        ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Third Year
+                  </button>
+                </div>
+              </div>
+
+              {/* Multi-section Department Section Toggle */}
+              {isMultiSectionDepartment && statusModalScope !== 'all' && (
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Section:</span>
+                  <div className="inline-flex rounded-xl bg-gray-100 p-1 text-xs font-semibold">
+                    <button
+                      onClick={() => { setStatusModalSection('ALL'); setIsCustomized(false); }}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        statusModalSection === 'ALL' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-gray-600'
+                      }`}
+                    >
+                      All Sections
+                    </button>
+                    <button
+                      onClick={() => { setStatusModalSection('A'); setIsCustomized(false); }}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        statusModalSection === 'A' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-gray-600'
+                      }`}
+                    >
+                      Section A
+                    </button>
+                    <button
+                      onClick={() => { setStatusModalSection('B'); setIsCustomized(false); }}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        statusModalSection === 'B' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-gray-600'
+                      }`}
+                    >
+                      Section B
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Department Name Format Toggle */}
+              <div className="flex items-center justify-between text-xs text-gray-600 bg-gray-50 px-3.5 py-2 rounded-xl border border-gray-200">
+                <span className="font-medium">Use Short Department Code ({department?.department_code || 'CODE'}):</span>
+                <button
+                  onClick={() => { setUseShortDeptName(!useShortDeptName); setIsCustomized(false); }}
+                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    useShortDeptName ? 'bg-indigo-600' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                      useShortDeptName ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Text Preview / Edit Box */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    Message Preview {isCustomized && <span className="text-indigo-600 lowercase">(edited)</span>}:
+                  </label>
+                  {isCustomized && (
+                    <button
+                      onClick={() => setIsCustomized(false)}
+                      className="text-[11px] text-gray-500 hover:text-indigo-600 underline cursor-pointer"
+                    >
+                      Reset to default
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  value={
+                    isCustomized
+                      ? customStatusText
+                      : generateStatusText(statusModalScope, statusModalSection, useShortDeptName)
+                  }
+                  onChange={(e) => {
+                    setCustomStatusText(e.target.value);
+                    setIsCustomized(true);
+                  }}
+                  rows={9}
+                  className="w-full bg-gray-900 text-gray-100 font-mono text-xs p-4 rounded-xl border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 leading-relaxed shadow-inner"
+                  placeholder="Status text..."
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  You can edit this message directly before copying or sending.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-6 pt-4 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3 bg-gray-50/50">
+              <button
+                onClick={() => {
+                  const textToShare = isCustomized
+                    ? customStatusText
+                    : generateStatusText(statusModalScope, statusModalSection, useShortDeptName);
+                  const url = `https://wa.me/?text=${encodeURIComponent(textToShare)}`;
+                  window.open(url, '_blank');
+                }}
+                className="flex items-center px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors text-xs sm:text-sm shadow-sm cursor-pointer"
+                title="Share directly via WhatsApp"
+              >
+                <Share2 className="w-4 h-4 mr-2" /> Share on WhatsApp
+              </button>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowStatusModal(false)}
+                  className="px-4 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition-colors text-xs sm:text-sm cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    const textToCopy = isCustomized
+                      ? customStatusText
+                      : generateStatusText(statusModalScope, statusModalSection, useShortDeptName);
+                    copyToClipboard(textToCopy, 'Status message copied to clipboard!');
+                  }}
+                  className="flex items-center px-5 py-2.5 bg-[#1E3A8A] text-white font-bold rounded-xl hover:bg-blue-900 transition-colors text-xs sm:text-sm shadow-md cursor-pointer"
+                >
+                  {copiedToast ? (
+                    <>
+                      <Check className="w-4 h-4 mr-2 text-emerald-300" />
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4 mr-2" />
+                      Copy to Clipboard
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING TOAST NOTIFICATION */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 bg-gray-900/95 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center space-x-3 z-50 animate-fade-in border border-gray-700 text-xs sm:text-sm font-semibold">
+          <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+            <Check className="w-4 h-4 text-emerald-400" />
+          </div>
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>
