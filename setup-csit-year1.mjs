@@ -64,7 +64,7 @@ const year1_courses = [
   {
     code: '240-001302',
     name: 'Digital Workplace Skills',
-    facs: ['Ms. J. Deetchananjali', 'Mr. P. Saivenkat']
+    facs: ['Ms. J. Deetchananjali', 'Mr. B. Nareshkumar']
   }
 ];
 
@@ -82,7 +82,7 @@ const facultyMembers = [
   { name: 'Dr. A. Gandhimathi', username: 'agandhimathi' },
   { name: 'Mr. K. Karthick', username: 'kkarthick' },
   { name: 'Ms. J. Deetchananjali', username: 'jdeetchananjali' },
-  { name: 'Mr. P. Saivenkat', username: 'psaivenkat' }
+  { name: 'Mr. B. Nareshkumar', username: 'bnareshkumar' }
 ];
 
 // ==================== RAW STUDENTS DATA ====================
